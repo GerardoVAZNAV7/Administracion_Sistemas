@@ -47,6 +47,33 @@ Cada máquina virtual cuenta con **dos adaptadores de red**:
 
 ---
 
+##  Actividades Realizadas
+
+### ✔ Configuración Inicial
+- Asignación de nombres de host descriptivos
+- Actualización de paquetes del sistema
+- Ajuste de interfaces de red
+- Verificación de ruteo correcto
+
+### ✔ Snapshots
+- Se creó una instantánea denominada **Estado Base** en cada máquina virtual
+- Permite restaurar el sistema a un punto estable inicial
+
+### ✔ Pruebas de Conectividad
+- Comunicación bidireccional mediante `ping` entre los tres nodos
+- Validación completa de la red interna aislada
+
+--
+
+##  Scripts de Diagnóstico
+
+Se desarrollaron scripts para mostrar información básica del sistema:
+
+### Información mostrada:
+- Nombre del equipo
+- Dirección IP activa
+- Espacio en disco disponible
+
 ### Scripts incluidos:
 - `tarea1_diagnostico.sh` → Linux (Fedora)
 - `tarea1_diagnostico.ps1` → Windows Server (PowerShell)
