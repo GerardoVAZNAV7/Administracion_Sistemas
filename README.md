@@ -25,15 +25,17 @@ El laboratorio fue desarrollado utilizando un hipervisor de virtualización y si
 
 Cada máquina virtual cuenta con **dos adaptadores de red**:
 
-### Adaptador 1 – NAT
+### Adaptador 1 – Red Interna
+- Nombre de red: `intnet-lab`
+- Red aislada para comunicación entre nodos
+- Direccionamiento IP estático
+- 
+### Adaptador 2 – NAT
 - Proporciona salida a Internet
 - Usado para actualizaciones y descarga de paquetes
 - Configurado mediante DHCP
 
-### Adaptador 2 – Red Interna
-- Nombre de red: `intnet-lab`
-- Red aislada para comunicación entre nodos
-- Direccionamiento IP estático
+
 
 ### Tabla de Direccionamiento IP
 
