@@ -1,9 +1,11 @@
-# *** PRACTICA 2 CONFIGURACION DEL SERVICIO DCHP
+
+#*** PRACTICA 2 CONFIGURACION DEL SERVICIO DHCP
 
 CONFIG_FILE="/etc/dhcp/dhcpd.conf"
 LEASE_FILE="/var/lib/dhcpd/dhcpd.leases"
+INTERFAZ=$(ip route | grep default | awk '{print $5}')
 
-function validar_ip() {
+validar_ip() {
     local ip=$1
     [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
     for oct in ${ip//./ }; do
@@ -12,38 +14,41 @@ function validar_ip() {
     return 0
 }
 
-function instalar_dhcp() {
+instalar_si_no_existe() {
     if ! rpm -q dhcp-server &>/dev/null; then
-        echo "Instalando isc-dhcp-server..."
-        dnf install -y dhcp-server
+        echo "No se encontro servicio DHCP. Procederemos con la descarga..."
+        dnf install -y dhcp-server &>/dev/null
+        echo "Descarga completada."
     else
-        echo "DHCP ya instalado."
+        echo "Servicio DHCP detectado."
     fi
 }
 
-function configurar_dhcp() {
-    read -p "Nombre del ámbito: " SCOPE
+configurar_dhcp() {
+    echo "=== CONFIGURACION DHCP ==="
+
+    read -p "Nombre del ambito: " SCOPE
 
     while true; do
         read -p "IP inicial: " START_IP
-        validar_ip $START_IP && break || echo "IP inválida"
+        validar_ip $START_IP && break || echo "IP invalida"
     done
 
     while true; do
         read -p "IP final: " END_IP
-        validar_ip $END_IP && break || echo "IP inválida"
+        validar_ip $END_IP && break || echo "IP invalida"
     done
 
-    read -p "Tiempo de concesión en segundos: " LEASE
+    read -p "Tiempo de concesion (segundos): " LEASE
 
     while true; do
         read -p "Gateway: " ROUTER
-        validar_ip $ROUTER && break || echo "IP inválida"
+        validar_ip $ROUTER && break || echo "IP invalida"
     done
 
     while true; do
         read -p "DNS: " DNS
-        validar_ip $DNS && break || echo "IP inválida"
+        validar_ip $DNS && break || echo "IP invalida"
     done
 
     cat > $CONFIG_FILE <<EOF
@@ -58,23 +63,34 @@ subnet 192.168.100.0 netmask 255.255.255.0 {
 }
 EOF
 
-    dhcpd -t || { echo "Error de sintaxis"; exit 1; }
+    echo "Configuracion aplicada."
 
-    systemctl enable dhcpd
+    echo "DHCPDARGS=$INTERFAZ" > /etc/sysconfig/dhcpd
+
+    dhcpd -t || { echo "Error de sintaxis en configuracion"; exit 1; }
+
+    systemctl enable dhcpd &>/dev/null
     systemctl restart dhcpd
+
+    echo "Servidor DHCP activo en interfaz $INTERFAZ"
 }
 
-function monitoreo() {
-    echo "Estado del servicio:"
-    systemctl status dhcpd --no-pager
+monitoreo() {
+    echo "=== MONITOREO EN TIEMPO REAL ==="
+    echo "Presiona CTRL + C para salir"
+    echo ""
 
-    echo "Concesiones activas:"
-    cat $LEASE_FILE
+    while true; do
+        clear
+        echo "Estado del servicio:"
+        systemctl is-active dhcpd
+        echo ""
+        echo "Concesiones activas:"
+        cat $LEASE_FILE 2>/dev/null | grep -E "lease|hardware"
+        sleep 5
+    done
 }
 
-case "$1" in
-    instalar) instalar_dhcp ;;
-    configurar) configurar_dhcp ;;
-    monitoreo) monitoreo ;;
-    *) echo "Uso: $0 {instalar|configurar|monitoreo}" ;;
-esac
+instalar_si_no_existe
+configurar_dhcp
+monitoreo

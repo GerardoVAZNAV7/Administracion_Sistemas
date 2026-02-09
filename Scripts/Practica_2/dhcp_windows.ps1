@@ -6,17 +6,21 @@ function Validar-IP {
     return $ip -match '^([0-9]{1,3}\.){3}[0-9]{1,3}$'
 }
 
-function Instalar-DHCP {
+function Instalar-SiNoExiste {
     if (-not (Get-WindowsFeature DHCP).Installed) {
-        Install-WindowsFeature DHCP -IncludeManagementTools
-        Add-DhcpServerInDC
+        Write-Host "No se encontro servicio DHCP. Procederemos con la descarga..."
+        Install-WindowsFeature DHCP -IncludeManagementTools | Out-Null
+        Add-DhcpServerInDC | Out-Null
+        Write-Host "Descarga completada."
     } else {
-        Write-Host "DHCP ya instalado"
+        Write-Host "Servicio DHCP detectado."
     }
 }
 
 function Configurar-DHCP {
-    $scope = Read-Host "Nombre del ámbito"
+    Write-Host "=== CONFIGURACION DHCP ==="
+
+    $scope = Read-Host "Nombre del ambito"
 
     do {
         $start = Read-Host "IP inicial"
@@ -26,7 +30,7 @@ function Configurar-DHCP {
         $end = Read-Host "IP final"
     } until (Validar-IP $end)
 
-    $lease = Read-Host "Tiempo de concesión (horas)"
+    $lease = Read-Host "Tiempo de concesion (horas)"
 
     do {
         $router = Read-Host "Gateway"
@@ -41,24 +45,35 @@ function Configurar-DHCP {
         -StartRange $start `
         -EndRange $end `
         -SubnetMask 255.255.255.0 `
-        -LeaseDuration ([TimeSpan]::FromHours($lease))
+        -LeaseDuration ([TimeSpan]::FromHours($lease)) `
+        -State Active
 
     Set-DhcpServerv4OptionValue `
         -Router $router `
         -DnsServer $dns
+
+    Write-Host "Configuracion aplicada."
 }
 
-function Monitoreo-DHCP {
-    Get-Service DHCPServer
-    Get-DhcpServerv4Scope
-    Get-DhcpServerv4Lease
+function Monitoreo {
+    Write-Host "=== MONITOREO EN TIEMPO REAL ==="
+    Write-Host "Presiona CTRL + C para salir"
+    Write-Host ""
+
+    while ($true) {
+        Clear-Host
+        Write-Host "Estado del servicio:"
+        Get-Service DHCPServer | Select-Object Status
+        Write-Host ""
+
+        Write-Host "Concesiones activas:"
+        Get-DhcpServerv4Lease | Select-Object IPAddress, HostName, ClientId
+
+        Start-Sleep -Seconds 5
+    }
 }
 
-param($accion)
+Instalar-SiNoExiste
+Configurar-DHCP
+Monitoreo
 
-switch ($accion) {
-    "instalar" { Instalar-DHCP }
-    "configurar" { Configurar-DHCP }
-    "monitoreo" { Monitoreo-DHCP }
-    default { Write-Host "Uso: .\dhcp_windows.ps1 instalar|configurar|monitoreo" }
-}
