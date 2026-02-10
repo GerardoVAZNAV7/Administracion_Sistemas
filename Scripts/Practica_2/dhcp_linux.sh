@@ -3,7 +3,7 @@
 
 CONFIG_FILE="/etc/dhcp/dhcpd.conf"
 LEASE_FILE="/var/lib/dhcpd/dhcpd.leases"
-INTERFAZ=$(ip route | grep default | awk '{print $5}')
+INTERFAZ=$(ip -o -4 addr show | grep 192.168.100 | awk '{print $2}')
 
 validar_ip() {
     local ip=$1
