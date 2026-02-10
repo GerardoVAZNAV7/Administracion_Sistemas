@@ -1,19 +1,24 @@
-
-#*** PRACTICA 2 CONFIGURACION DEL SERVICIO DHCP
-
 function Validar-IP {
     param([string]$ip)
-    return $ip -match '^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+
+    if ($ip -match '^([0-9]{1,3}\.){3}[0-9]{1,3}$') {
+        $oct = $ip.Split('.')
+        foreach ($o in $oct) {
+            if ([int]$o -gt 255) { return $false }
+        }
+        return $true
+    }
+    return $false
 }
 
-function Instalar-SiNoExiste {
+function Instalar-DHCP {
     if (-not (Get-WindowsFeature DHCP).Installed) {
-        Write-Host "No se encontro servicio DHCP. Procederemos con la descarga..."
+        Write-Host "Iniciando descarga del servicio DHCP..."
         Install-WindowsFeature DHCP -IncludeManagementTools | Out-Null
         Add-DhcpServerInDC | Out-Null
-        Write-Host "Descarga completada."
+        Write-Host "Descarga finalizada."
     } else {
-        Write-Host "Servicio DHCP detectado."
+        Write-Host "El servicio DHCP ya esta instalado."
     }
 }
 
@@ -22,23 +27,13 @@ function Configurar-DHCP {
 
     $scope = Read-Host "Nombre del ambito"
 
-    do {
-        $start = Read-Host "IP inicial"
-    } until (Validar-IP $start)
+    do { $start = Read-Host "IP inicial" } until (Validar-IP $start)
+    do { $end = Read-Host "IP final" } until (Validar-IP $end)
 
-    do {
-        $end = Read-Host "IP final"
-    } until (Validar-IP $end)
+    $lease = Read-Host "Tiempo de concesion en horas"
 
-    $lease = Read-Host "Tiempo de concesion (horas)"
-
-    do {
-        $router = Read-Host "Gateway"
-    } until (Validar-IP $router)
-
-    do {
-        $dns = Read-Host "DNS"
-    } until (Validar-IP $dns)
+    do { $router = Read-Host "Gateway" } until (Validar-IP $router)
+    do { $dns = Read-Host "DNS" } until (Validar-IP $dns)
 
     Add-DhcpServerv4Scope `
         -Name $scope `
@@ -49,50 +44,71 @@ function Configurar-DHCP {
         -State Active
 
     Set-DhcpServerv4OptionValue `
+        -ScopeId ((Get-DhcpServerv4Scope).ScopeId) `
         -Router $router `
         -DnsServer $dns
 
-    Write-Host "Configuracion aplicada."
+    Write-Host "Configuracion aplicada correctamente."
 }
 
-function Monitoreo {
-    Write-Host "=== MONITOREO EN TIEMPO REAL ==="
+function Monitoreo-DHCP {
+
+    Write-Host "=== MONITOREO DHCP ==="
     Write-Host "Presiona CTRL + C para salir"
-    Write-Host ""
 
     while ($true) {
         Clear-Host
 
-        Write-Host "Estado del servicio DHCP:"
-        Get-Service DHCPServer | Select-Object Status
+        $serv = Get-Service DHCPServer
+        Write-Host "Estado del servicio:" $serv.Status
         Write-Host ""
 
-        # Obtener automaticamente el ScopeId
-        $scope = Get-DhcpServerv4Scope | Select-Object -ExpandProperty ScopeId
+        $scopes = Get-DhcpServerv4Scope
 
-        if ($scope) {
-            Write-Host "Ambito detectado:" $scope
-            Write-Host ""
+        if ($scopes) {
+            foreach ($s in $scopes) {
+                Write-Host "Ambito:" $s.ScopeId
+                Write-Host "Rango:" $s.StartRange "-" $s.EndRange
+                Write-Host ""
 
-            Write-Host "Concesiones activas:"
-            Get-DhcpServerv4Lease -ScopeId $scope |
-            Select-Object `
-                IPAddress,
-                HostName,
-                ClientId,
-                AddressState,
-                LeaseExpiryTime
+                $leases = Get-DhcpServerv4Lease -ScopeId $s.ScopeId -ErrorAction SilentlyContinue
+
+                if ($leases) {
+                    $leases | Select-Object IPAddress, HostName, ClientId, AddressState, LeaseExpiryTime
+                } else {
+                    Write-Host "Sin concesiones registradas en este ambito."
+                }
+
+                Write-Host ""
+            }
+        } else {
+            Write-Host "No existen ambitos configurados."
         }
-        else {
-            Write-Host "No se detecto ningun ambito DHCP configurado."
-        }
 
-        Start-Sleep -Seconds 5
+        Start-Sleep 5
     }
 }
 
+function Menu {
+    do {
+        Write-Host ""
+        Write-Host "===== MENU DHCP WINDOWS ====="
+        Write-Host "1. Instalar servicio DHCP"
+        Write-Host "2. Configurar servicio DHCP"
+        Write-Host "3. Monitorear servicio"
+        Write-Host "4. Salir"
 
-Instalar-SiNoExiste
-Configurar-DHCP
-Monitoreo
+        $op = Read-Host "Seleccione una opcion"
 
+        switch ($op) {
+            "1" { Instalar-DHCP }
+            "2" { Configurar-DHCP }
+            "3" { Monitoreo-DHCP }
+            "4" { Write-Host "Saliendo..." }
+            default { Write-Host "Opcion invalida" }
+        }
+
+    } while ($op -ne "4")
+}
+
+Menu
