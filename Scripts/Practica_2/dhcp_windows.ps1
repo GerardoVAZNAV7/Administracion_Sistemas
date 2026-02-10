@@ -62,16 +62,35 @@ function Monitoreo {
 
     while ($true) {
         Clear-Host
-        Write-Host "Estado del servicio:"
+
+        Write-Host "Estado del servicio DHCP:"
         Get-Service DHCPServer | Select-Object Status
         Write-Host ""
 
-        Write-Host "Concesiones activas:"
-        Get-DhcpServerv4Lease | Select-Object IPAddress, HostName, ClientId
+        # Obtener automaticamente el ScopeId
+        $scope = Get-DhcpServerv4Scope | Select-Object -ExpandProperty ScopeId
+
+        if ($scope) {
+            Write-Host "Ambito detectado:" $scope
+            Write-Host ""
+
+            Write-Host "Concesiones activas:"
+            Get-DhcpServerv4Lease -ScopeId $scope |
+            Select-Object `
+                IPAddress,
+                HostName,
+                ClientId,
+                AddressState,
+                LeaseExpiryTime
+        }
+        else {
+            Write-Host "No se detecto ningun ambito DHCP configurado."
+        }
 
         Start-Sleep -Seconds 5
     }
 }
+
 
 Instalar-SiNoExiste
 Configurar-DHCP
