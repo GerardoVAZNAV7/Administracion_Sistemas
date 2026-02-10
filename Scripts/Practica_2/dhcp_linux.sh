@@ -2,6 +2,45 @@ CONFIG_FILE="/etc/dhcp/dhcpd.conf"
 LEASE_FILE="/var/lib/dhcpd/dhcpd.leases"
 INTERFAZ=$(ip -o -4 addr show | grep 192.168.100 | awk '{print $2}')
 
+ip_a_entero() {
+    IFS=. read -r o1 o2 o3 o4 <<< "$1"
+    echo $((o1*256**3 + o2*256**2 + o3*256 + o4))
+}
+
+ip_logica() {
+    local ip=$1
+
+    validar_ip "$ip" || return 1
+    [[ "$ip" == "0.0.0.0" ]] && return 1
+    [[ "$ip" == "8.8.8.8" ]] && return 1
+
+    IFS=. read -r a b c d <<< "$ip"
+
+    # Debe pertenecer a la red 192.168.100.0/24
+    [[ "$a" != "192" || "$b" != "168" || "$c" != "100" ]] && return 1
+
+    # No permitir red ni broadcast
+    ((d == 0 || d == 255)) && return 1
+
+    return 0
+}
+
+validar_rango() {
+    local start=$1
+    local end=$2
+
+    ip_logica "$start" || return 1
+    ip_logica "$end" || return 1
+
+    local s=$(ip_a_entero "$start")
+    local e=$(ip_a_entero "$end")
+
+    (( s < e )) || return 1
+
+    return 0
+}
+
+
 validar_ip() {
     local ip=$1
     [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
@@ -26,8 +65,21 @@ configurar_dhcp() {
 
     read -p "Nombre del ambito: " SCOPE
 
-    while true; do read -p "IP inicial: " START; validar_ip $START && break || echo "IP invalida"; done
-    while true; do read -p "IP final: " END; validar_ip $END && break || echo "IP invalida"; done
+    while true; do
+    read -p "IP inicial: " START
+    ip_logica "$START" && break || echo "IP invalida o fuera de la red 192.168.100.0/24"
+done
+
+while true; do
+    read -p "IP final: " END
+    ip_logica "$END" && break || echo "IP invalida o fuera de la red 192.168.100.0/24"
+done
+
+validar_rango "$START" "$END" || {
+    echo "Rango incoherente. La IP inicial debe ser menor que la final."
+    return
+}
+
 
     read -p "Tiempo de concesion (segundos): " LEASE
 

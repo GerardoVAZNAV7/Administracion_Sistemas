@@ -1,14 +1,44 @@
-function Validar-IP {
+function Convertir-IPaEntero {
+    param([string]$ip)
+    $oct = $ip.Split('.')
+    return ([int]$oct[0] -shl 24) -bor
+           ([int]$oct[1] -shl 16) -bor
+           ([int]$oct[2] -shl 8)  -bor
+           ([int]$oct[3])
+}
+
+function IP-Logica {
     param([string]$ip)
 
-    if ($ip -match '^([0-9]{1,3}\.){3}[0-9]{1,3}$') {
-        $oct = $ip.Split('.')
-        foreach ($o in $oct) {
-            if ([int]$o -gt 255) { return $false }
-        }
-        return $true
+    if (-not ($ip -match '^([0-9]{1,3}\.){3}[0-9]{1,3}$')) { return $false }
+
+    $oct = $ip.Split('.')
+    foreach ($o in $oct) {
+        if ([int]$o -gt 255) { return $false }
     }
-    return $false
+
+    if ($ip -eq "0.0.0.0") { return $false }
+    if ($ip -eq "8.8.8.8") { return $false }
+
+    # Validar red 192.168.100.0/24
+    if ($oct[0] -ne 192 -or $oct[1] -ne 168 -or $oct[2] -ne 100) { return $false }
+
+    # No permitir red ni broadcast
+    if ($oct[3] -eq 0 -or $oct[3] -eq 255) { return $false }
+
+    return $true
+}
+
+function Rango-Valido {
+    param($start, $end)
+
+    if (-not (IP-Logica $start)) { return $false }
+    if (-not (IP-Logica $end)) { return $false }
+
+    $s = Convertir-IPaEntero $start
+    $e = Convertir-IPaEntero $end
+
+    return ($s -lt $e)
 }
 
 function Instalar-DHCP {
@@ -27,8 +57,19 @@ function Configurar-DHCP {
 
     $scope = Read-Host "Nombre del ambito"
 
-    do { $start = Read-Host "IP inicial" } until (Validar-IP $start)
-    do { $end = Read-Host "IP final" } until (Validar-IP $end)
+ do {
+    $start = Read-Host "IP inicial"
+} until (IP-Logica $start)
+
+do {
+    $end = Read-Host "IP final"
+} until (IP-Logica $end)
+
+if (-not (Rango-Valido $start $end)) {
+    Write-Host "Rango incoherente. La IP inicial debe ser menor que la final."
+    return
+}
+
 
     $lease = Read-Host "Tiempo de concesion en horas"
 
