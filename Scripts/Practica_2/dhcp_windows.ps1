@@ -52,21 +52,29 @@ function Rango-Valido {
 function Calcular-RedMascara {
     param($ip1, $ip2)
 
-    $a = $ip1.Split('.')
-    $b = $ip2.Split('.')
+    $n1 = Convertir-IPaEntero $ip1
+    $n2 = Convertir-IPaEntero $ip2
 
-    $mask = @()
-    for ($i=0; $i -lt 4; $i++) {
-        if ($a[$i] -eq $b[$i]) {
-            $mask += 255
-        } else {
-            $mask += 0
-        }
+    # XOR para encontrar bits distintos
+    $diff = $n1 -bxor $n2
+
+    $bits = 32
+    while ($diff -gt 0) {
+        $diff = $diff -shr 1
+        $bits--
     }
 
-    $global:MASCARA = ($mask -join ".")
-    $global:RED = "$($a[0]).$($a[1]).$($a[2]).0"
+    # Generar mascara
+    $mask = ([uint32]0xFFFFFFFF) -shl (32 - $bits)
+    $mask = $mask -band 0xFFFFFFFF
+
+    # Calcular red
+    $net = $n1 -band $mask
+
+    $global:MASCARA = Convertir-EnteroaIP $mask
+    $global:RED = Convertir-EnteroaIP $net
 }
+
 
 
 # ==============================
