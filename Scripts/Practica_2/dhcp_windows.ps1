@@ -52,23 +52,22 @@ function Rango-Valido {
 function Calcular-RedMascara {
     param($ip1, $ip2)
 
-    $n1 = Convertir-IPaEntero $ip1
-    $n2 = Convertir-IPaEntero $ip2
+    $a = $ip1.Split('.')
+    $b = $ip2.Split('.')
 
-    $diff = $n1 -bxor $n2
-    $bits = 32
-
-    while ($diff -gt 0) {
-        $diff = $diff -shr 1
-        $bits--
+    $mask = @()
+    for ($i=0; $i -lt 4; $i++) {
+        if ($a[$i] -eq $b[$i]) {
+            $mask += 255
+        } else {
+            $mask += 0
+        }
     }
 
-    $mask = ([uint32]0xFFFFFFFF -shl (32-$bits))
-    $net = $n1 -band $mask
-
-    $global:RED = Convertir-EnteroaIP $net
-    $global:MASCARA = Convertir-EnteroaIP $mask
+    $global:MASCARA = ($mask -join ".")
+    $global:RED = "$($a[0]).$($a[1]).$($a[2]).0"
 }
+
 
 # ==============================
 # CONFIGURAR IP DEL SERVIDOR
@@ -91,12 +90,21 @@ function Configurar-IPServidor {
         return
     }
 
-    $prefix = (
-        ($mask.Split('.') | ForEach-Object {
-            [Convert]::ToString($_,2).PadLeft(8,'0')
-        }) -join '' |
-        Where-Object { $_ -eq '1' }
-    ).Count
+   $prefix = 0
+foreach ($o in $mask.Split('.')) {
+    switch ([int]$o) {
+        255 { $prefix += 8 }
+        254 { $prefix += 7 }
+        252 { $prefix += 6 }
+        248 { $prefix += 5 }
+        240 { $prefix += 4 }
+        224 { $prefix += 3 }
+        192 { $prefix += 2 }
+        128 { $prefix += 1 }
+        0   { }
+    }
+}
+
 
     # Elimina IPs anteriores
     Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
@@ -143,9 +151,28 @@ function Instalar-DHCP {
 # CONFIGURACION
 # ==============================
 
+function Limpiar-ScopesDHCP {
+
+    $scopes = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue
+
+    if ($scopes) {
+        Write-Host "Eliminando configuracion DHCP anterior..."
+
+        foreach ($s in $scopes) {
+            Remove-DhcpServerv4Scope -ScopeId $s.ScopeId -Force
+        }
+
+        Write-Host "Scopes anteriores eliminados"
+    }
+}
+
+
 function Configurar-DHCP {
 
+
+
     Write-Host "=== CONFIGURACION DHCP ==="
+    Limpiar-ScopesDHCP
 
     $scope = Read-Host "Nombre del ambito"
 
