@@ -71,6 +71,49 @@ function Calcular-RedMascara {
 }
 
 # ==============================
+# CONFIGURAR IP DEL SERVIDOR
+# ==============================
+
+function Configurar-IPServidor {
+    param(
+        [string]$ip,
+        [string]$mask
+    )
+
+    Write-Host "Configurando IP del servidor..."
+
+    $adapter = Get-NetAdapter |
+               Where-Object {$_.Status -eq "Up"} |
+               Select-Object -First 1
+
+    if (-not $adapter) {
+        Write-Host "No se encontro interfaz de red activa"
+        return
+    }
+
+    $prefix = (
+        ($mask.Split('.') | ForEach-Object {
+            [Convert]::ToString($_,2).PadLeft(8,'0')
+        }) -join '' |
+        Where-Object { $_ -eq '1' }
+    ).Count
+
+    # Elimina IPs anteriores
+    Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+    Remove-NetIPAddress -Confirm:$false
+
+    # Asigna IP nueva
+    New-NetIPAddress `
+        -IPAddress $ip `
+        -PrefixLength $prefix `
+        -InterfaceIndex $adapter.InterfaceIndex
+
+    Write-Host "IP asignada:" $ip
+    Write-Host "Interfaz:" $adapter.Name
+}
+
+
+# ==============================
 # INSTALACION
 # ==============================
 
@@ -117,9 +160,11 @@ function Configurar-DHCP {
         return
     }
 
-    Calcular-RedMascara $start $end
+   Calcular-RedMascara $start $end
+   $serverIP = $start
 
-    $serverIP = $start
+   Configurar-IPServidor $serverIP $MASCARA
+
 
     do {
         $lease = Read-Host "Tiempo de concesion en segundos"
@@ -188,6 +233,39 @@ function Monitoreo-DHCP {
 }
 
 # ==============================
+# VERIFICAR INSTALACION
+# ==============================
+
+function Verificar-Instalacion {
+
+    Write-Host "=== VERIFICACION DEL SERVICIO DHCP ==="
+    Write-Host ""
+
+    $feature = Get-WindowsFeature DHCP
+
+    if ($feature.Installed) {
+        Write-Host "Rol DHCP instalado"
+    } else {
+        Write-Host "Rol DHCP NO instalado"
+        return
+    }
+
+    $serv = Get-Service DHCPServer -ErrorAction SilentlyContinue
+
+    if (-not $serv) {
+        Write-Host "Servicio DHCP no registrado"
+        return
+    }
+
+    switch ($serv.Status) {
+        "Running" { Write-Host "Servicio en ejecucion" }
+        "Stopped" { Write-Host "Servicio instalado pero detenido" }
+        default { Write-Host "Estado:" $serv.Status }
+    }
+}
+
+
+# ==============================
 # MENU
 # ==============================
 
@@ -198,19 +276,25 @@ function Menu {
         Write-Host "1. Instalar servicio DHCP"
         Write-Host "2. Configurar servicio DHCP"
         Write-Host "3. Monitorear servicio"
-        Write-Host "4. Salir"
+        Write-Host "4. Verificar instalacion"
+        Write-Host "5. Salir"
+
 
         $op = Read-Host "Seleccione una opcion"
 
-        switch ($op) {
-            "1" { Instalar-DHCP }
-            "2" { Configurar-DHCP }
-            "3" { Monitoreo-DHCP }
-            "4" { Write-Host "Saliendo..." }
-            default { Write-Host "Opcion invalida" }
-        }
+       switch ($op) {
+    "1" { Instalar-DHCP }
+    "2" { Configurar-DHCP }
+    "3" { Monitoreo-DHCP }
+    "4" { Verificar-Instalacion }
+    "5" { Write-Host "Saliendo..." }
+    default { Write-Host "Opcion invalida" }
+     }
 
-    } while ($op -ne "4")
+} while ($op -ne "5")
+
+
+    
 }
 
 Menu
