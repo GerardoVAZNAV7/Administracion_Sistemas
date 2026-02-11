@@ -1,3 +1,7 @@
+# ==============================
+# UTILIDADES IP
+# ==============================
+
 function Convertir-IPaEntero {
     param([string]$ip)
     $oct = $ip.Split('.')
@@ -7,7 +11,12 @@ function Convertir-IPaEntero {
            ([int]$oct[3])
 }
 
-function IP-Logica {
+function Convertir-EnteroaIP {
+    param([int64]$num)
+    return "$(($num -shr 24) -band 255).$((($num -shr 16) -band 255)).$((($num -shr 8) -band 255)).$($num -band 255)"
+}
+
+function Validar-IP {
     param([string]$ip)
 
     if (-not ($ip -match '^([0-9]{1,3}\.){3}[0-9]{1,3}$')) { return $false }
@@ -18,13 +27,8 @@ function IP-Logica {
     }
 
     if ($ip -eq "0.0.0.0") { return $false }
-    if ($ip -eq "8.8.8.8") { return $false }
-
-    # Validar red 192.168.100.0/24
-    if ($oct[0] -ne 192 -or $oct[1] -ne 168 -or $oct[2] -ne 100) { return $false }
-
-    # No permitir red ni broadcast
-    if ($oct[3] -eq 0 -or $oct[3] -eq 255) { return $false }
+    if ($ip -eq "127.0.0.1") { return $false }
+    if ($ip -eq "255.255.255.255") { return $false }
 
     return $true
 }
@@ -32,8 +36,8 @@ function IP-Logica {
 function Rango-Valido {
     param($start, $end)
 
-    if (-not (IP-Logica $start)) { return $false }
-    if (-not (IP-Logica $end)) { return $false }
+    if (-not (Validar-IP $start)) { return $false }
+    if (-not (Validar-IP $end)) { return $false }
 
     $s = Convertir-IPaEntero $start
     $e = Convertir-IPaEntero $end
@@ -41,61 +45,123 @@ function Rango-Valido {
     return ($s -lt $e)
 }
 
-function Instalar-DHCP {
-    if (-not (Get-WindowsFeature DHCP).Installed) {
-        Write-Host "Iniciando descarga del servicio DHCP..."
-        Install-WindowsFeature DHCP -IncludeManagementTools | Out-Null
-        Add-DhcpServerInDC | Out-Null
-        Write-Host "Descarga finalizada."
-    } else {
-        Write-Host "El servicio DHCP ya esta instalado."
+# ==============================
+# CALCULO DE RED Y MASCARA
+# ==============================
+
+function Calcular-RedMascara {
+    param($ip1, $ip2)
+
+    $n1 = Convertir-IPaEntero $ip1
+    $n2 = Convertir-IPaEntero $ip2
+
+    $diff = $n1 -bxor $n2
+    $bits = 32
+
+    while ($diff -gt 0) {
+        $diff = $diff -shr 1
+        $bits--
     }
+
+    $mask = ([uint32]0xFFFFFFFF -shl (32-$bits))
+    $net = $n1 -band $mask
+
+    $global:RED = Convertir-EnteroaIP $net
+    $global:MASCARA = Convertir-EnteroaIP $mask
 }
 
+# ==============================
+# INSTALACION
+# ==============================
+
+function Instalar-DHCP {
+    $feature = Get-WindowsFeature DHCP
+
+    if ($feature.Installed) {
+        do {
+            $op = Read-Host "El servicio ya esta instalado. ¿Quieres reinstalarlo? (y/n)"
+        } until ($op -eq "y" -or $op -eq "n")
+
+        if ($op -eq "n") {
+            Write-Host "Instalacion cancelada."
+            return
+        }
+
+        Uninstall-WindowsFeature DHCP -IncludeManagementTools | Out-Null
+    }
+
+    Write-Host "Instalando DHCP..."
+    Install-WindowsFeature DHCP -IncludeManagementTools | Out-Null
+    Add-DhcpServerInDC | Out-Null
+    Write-Host "Instalacion completada."
+}
+
+# ==============================
+# CONFIGURACION
+# ==============================
+
 function Configurar-DHCP {
+
     Write-Host "=== CONFIGURACION DHCP ==="
 
     $scope = Read-Host "Nombre del ambito"
 
- do {
-    $start = Read-Host "IP inicial"
-} until (IP-Logica $start)
+    do { $start = Read-Host "IP inicial" }
+    until (Validar-IP $start)
 
-do {
-    $end = Read-Host "IP final"
-} until (IP-Logica $end)
+    do { $end = Read-Host "IP final" }
+    until (Validar-IP $end)
 
-if (-not (Rango-Valido $start $end)) {
-    Write-Host "Rango incoherente. La IP inicial debe ser menor que la final."
-    return
-}
+    if (-not (Rango-Valido $start $end)) {
+        Write-Host "La IP inicial debe ser menor que la final"
+        return
+    }
 
+    Calcular-RedMascara $start $end
 
-    $lease = Read-Host "Tiempo de concesion en horas"
+    $serverIP = $start
 
-    do { $router = Read-Host "Gateway" } until (Validar-IP $router)
-    do { $dns = Read-Host "DNS" } until (Validar-IP $dns)
+    do {
+        $lease = Read-Host "Tiempo de concesion en segundos"
+    } until ($lease -match '^[0-9]+$' -and [int]$lease -gt 0)
+
+    $router = Read-Host "Gateway (opcional)"
+    if (-not (Validar-IP $router)) { $router = $null }
+
+    $dns = Read-Host "DNS (opcional)"
+    if (-not (Validar-IP $dns)) { $dns = $null }
+
+    $scopeId = $RED
 
     Add-DhcpServerv4Scope `
         -Name $scope `
         -StartRange $start `
         -EndRange $end `
-        -SubnetMask 255.255.255.0 `
-        -LeaseDuration ([TimeSpan]::FromHours($lease)) `
+        -SubnetMask $MASCARA `
+        -LeaseDuration ([TimeSpan]::FromSeconds($lease)) `
         -State Active
 
-    Set-DhcpServerv4OptionValue `
-        -ScopeId ((Get-DhcpServerv4Scope).ScopeId) `
-        -Router $router `
-        -DnsServer $dns
+    if ($router) {
+        Set-DhcpServerv4OptionValue -ScopeId $scopeId -Router $router
+    }
 
-    Write-Host "Configuracion aplicada correctamente."
+    if ($dns) {
+        Set-DhcpServerv4OptionValue -ScopeId $scopeId -DnsServer $dns
+    }
+
+    Write-Host ""
+    Write-Host "Configuracion aplicada correctamente"
+    Write-Host "Red: $RED"
+    Write-Host "Mascara: $MASCARA"
 }
+
+# ==============================
+# MONITOREO
+# ==============================
 
 function Monitoreo-DHCP {
 
-    Write-Host "=== MONITOREO DHCP ==="
-    Write-Host "Presiona CTRL + C para salir"
+    Write-Host "CTRL + C para salir"
 
     while ($true) {
         Clear-Host
@@ -106,34 +172,29 @@ function Monitoreo-DHCP {
 
         $scopes = Get-DhcpServerv4Scope
 
-        if ($scopes) {
-            foreach ($s in $scopes) {
-                Write-Host "Ambito:" $s.ScopeId
-                Write-Host "Rango:" $s.StartRange "-" $s.EndRange
-                Write-Host ""
+        foreach ($s in $scopes) {
+            Write-Host "Ambito:" $s.ScopeId
+            Write-Host "Rango:" $s.StartRange "-" $s.EndRange
+            Write-Host ""
 
-                $leases = Get-DhcpServerv4Lease -ScopeId $s.ScopeId -ErrorAction SilentlyContinue
+            Get-DhcpServerv4Lease -ScopeId $s.ScopeId -ErrorAction SilentlyContinue |
+            Select-Object IPAddress, HostName, AddressState, LeaseExpiryTime
 
-                if ($leases) {
-                    $leases | Select-Object IPAddress, HostName, ClientId, AddressState, LeaseExpiryTime
-                } else {
-                    Write-Host "Sin concesiones registradas en este ambito."
-                }
-
-                Write-Host ""
-            }
-        } else {
-            Write-Host "No existen ambitos configurados."
+            Write-Host ""
         }
 
         Start-Sleep 5
     }
 }
 
+# ==============================
+# MENU
+# ==============================
+
 function Menu {
     do {
         Write-Host ""
-        Write-Host "===== MENU DHCP WINDOWS ====="
+        Write-Host "===== MENU DHCP WINDOWS SERVER ====="
         Write-Host "1. Instalar servicio DHCP"
         Write-Host "2. Configurar servicio DHCP"
         Write-Host "3. Monitorear servicio"

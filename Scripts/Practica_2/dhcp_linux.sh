@@ -1,26 +1,32 @@
+#!/bin/bash
+
 CONFIG_FILE="/etc/dhcp/dhcpd.conf"
 LEASE_FILE="/var/lib/dhcpd/dhcpd.leases"
-INTERFAZ=$(ip -o -4 addr show | grep 192.168.100 | awk '{print $2}')
+
+# ==============================
+# UTILIDADES IP
+# ==============================
 
 ip_a_entero() {
     IFS=. read -r o1 o2 o3 o4 <<< "$1"
     echo $((o1*256**3 + o2*256**2 + o3*256 + o4))
 }
 
-ip_logica() {
+entero_a_ip() {
     local ip=$1
+    echo "$(( (ip>>24)&255 )).$(( (ip>>16)&255 )).$(( (ip>>8)&255 )).$(( ip&255 ))"
+}
 
-    validar_ip "$ip" || return 1
+validar_ip() {
+    local ip=$1
+    [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+    for oct in ${ip//./ }; do
+        ((oct>=0 && oct<=255)) || return 1
+    done
+
     [[ "$ip" == "0.0.0.0" ]] && return 1
-    [[ "$ip" == "8.8.8.8" ]] && return 1
-
-    IFS=. read -r a b c d <<< "$ip"
-
-    # Debe pertenecer a la red 192.168.100.0/24
-    [[ "$a" != "192" || "$b" != "168" || "$c" != "100" ]] && return 1
-
-    # No permitir red ni broadcast
-    ((d == 0 || d == 255)) && return 1
+    [[ "$ip" == "127.0.0.1" ]] && return 1
+    [[ "$ip" == "255.255.255.255" ]] && return 1
 
     return 0
 }
@@ -29,36 +35,80 @@ validar_rango() {
     local start=$1
     local end=$2
 
-    ip_logica "$start" || return 1
-    ip_logica "$end" || return 1
+    validar_ip "$start" || return 1
+    validar_ip "$end" || return 1
 
     local s=$(ip_a_entero "$start")
     local e=$(ip_a_entero "$end")
 
     (( s < e )) || return 1
-
     return 0
 }
 
+# ==============================
+# CALCULO AUTOMATICO DE RED
+# ==============================
 
-validar_ip() {
-    local ip=$1
-    [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
-    for oct in ${ip//./ }; do
-        ((oct>=0 && oct<=255)) || return 1
+calcular_red_y_mascara() {
+    local ip1=$1
+    local ip2=$2
+
+    local n1=$(ip_a_entero "$ip1")
+    local n2=$(ip_a_entero "$ip2")
+
+    local diff=$(( n1 ^ n2 ))
+
+    local bits=32
+    while (( diff > 0 )); do
+        diff=$(( diff >> 1 ))
+        ((bits--))
     done
-    return 0
+
+    local mask=$(( 0xFFFFFFFF << (32-bits) & 0xFFFFFFFF ))
+    local net=$(( n1 & mask ))
+
+    RED=$(entero_a_ip $net)
+    MASCARA=$(entero_a_ip $mask)
 }
 
-instalar_dhcp() {
-    if ! rpm -q dhcp-server &>/dev/null; then
-        echo "Iniciando descarga del servicio DHCP..."
-        dnf install -y dhcp-server &>/dev/null
-        echo "Descarga finalizada."
-    else
-        echo "El servicio DHCP ya esta instalado."
+detectar_interfaz() {
+    local ip=$1
+    INTERFAZ=$(ip -o -4 addr show | grep "$ip" | awk '{print $2}' | head -n1)
+
+    if [[ -z "$INTERFAZ" ]]; then
+        INTERFAZ=$(ip -o link show | awk -F': ' '{print $2}' | grep -v lo | head -n1)
     fi
 }
+
+# ==============================
+# INSTALACION
+# ==============================
+
+instalar_dhcp() {
+    if rpm -q dhcp-server &>/dev/null; then
+        while true; do
+            read -p "El servicio ya esta instalado. ¿Quieres volver a instalarlo? (y/n): " op
+            [[ "$op" == "y" ]] && {
+                dnf reinstall -y dhcp-server &>/dev/null
+                echo "Servicio reinstalado."
+                return
+            }
+            [[ "$op" == "n" ]] && {
+                echo "Instalacion cancelada."
+                return
+            }
+            echo "Solo se permite y o n"
+        done
+    else
+        echo "Instalando DHCP..."
+        dnf install -y dhcp-server &>/dev/null
+        echo "Instalacion completada."
+    fi
+}
+
+# ==============================
+# CONFIGURACION
+# ==============================
 
 configurar_dhcp() {
     echo "=== CONFIGURACION DHCP ==="
@@ -66,67 +116,90 @@ configurar_dhcp() {
     read -p "Nombre del ambito: " SCOPE
 
     while true; do
-    read -p "IP inicial: " START
-    ip_logica "$START" && break || echo "IP invalida o fuera de la red 192.168.100.0/24"
-done
+        read -p "IP inicial: " START
+        validar_ip "$START" && break || echo "IP invalida"
+    done
 
-while true; do
-    read -p "IP final: " END
-    ip_logica "$END" && break || echo "IP invalida o fuera de la red 192.168.100.0/24"
-done
+    while true; do
+        read -p "IP final: " END
+        validar_ip "$END" && break || echo "IP invalida"
+    done
 
-validar_rango "$START" "$END" || {
-    echo "Rango incoherente. La IP inicial debe ser menor que la final."
-    return
-}
+    validar_rango "$START" "$END" || {
+        echo "La IP inicial debe ser menor que la final"
+        return
+    }
 
+    calcular_red_y_mascara "$START" "$END"
 
-    read -p "Tiempo de concesion (segundos): " LEASE
+    SERVER_IP=$START
 
-    while true; do read -p "Gateway: " ROUTER; validar_ip $ROUTER && break || echo "IP invalida"; done
-    while true; do read -p "DNS: " DNS; validar_ip $DNS && break || echo "IP invalida"; done
+    detectar_interfaz "$SERVER_IP"
+
+    while true; do
+        read -p "Tiempo de concesion (segundos): " LEASE
+        [[ "$LEASE" =~ ^[0-9]+$ ]] && ((LEASE>0)) && break
+        echo "Solo numeros enteros positivos"
+    done
+
+    read -p "Gateway (opcional): " ROUTER
+    [[ -n "$ROUTER" ]] && ! validar_ip "$ROUTER" && ROUTER=""
+
+    read -p "DNS (opcional): " DNS
+    [[ -n "$DNS" ]] && ! validar_ip "$DNS" && DNS=""
 
     cat > $CONFIG_FILE <<EOF
-option domain-name "red.local";
-option domain-name-servers $DNS;
 default-lease-time $LEASE;
 max-lease-time $LEASE;
 
-subnet 192.168.100.0 netmask 255.255.255.0 {
+subnet $RED netmask $MASCARA {
     range $START $END;
-    option routers $ROUTER;
-}
 EOF
+
+    [[ -n "$ROUTER" ]] && echo "    option routers $ROUTER;" >> $CONFIG_FILE
+    [[ -n "$DNS" ]] && echo "    option domain-name-servers $DNS;" >> $CONFIG_FILE
+
+    echo "}" >> $CONFIG_FILE
 
     echo "DHCPDARGS=$INTERFAZ" > /etc/sysconfig/dhcpd
 
-    dhcpd -t || { echo "Error de sintaxis"; exit 1; }
+    dhcpd -t || { echo "Error en configuracion"; return; }
 
     systemctl enable dhcpd &>/dev/null
     systemctl restart dhcpd
 
-    echo "Configuracion aplicada correctamente."
+    echo ""
+    echo "Servidor configurado correctamente"
+    echo "Red: $RED"
+    echo "Mascara: $MASCARA"
+    echo "Interfaz: $INTERFAZ"
 }
 
-monitoreo() {
-    echo "=== MONITOREO DHCP ==="
-    echo "CTRL + C para salir"
+# ==============================
+# MONITOREO
+# ==============================
 
+monitoreo() {
+    echo "CTRL + C para salir"
     while true; do
         clear
         echo "Estado del servicio:"
         systemctl is-active dhcpd
         echo ""
         echo "Concesiones activas:"
-        cat $LEASE_FILE 2>/dev/null | grep -E "lease|hardware"
+        grep -E "lease|hardware" $LEASE_FILE 2>/dev/null
         sleep 5
     done
 }
 
+# ==============================
+# MENU
+# ==============================
+
 menu() {
     while true; do
         echo ""
-        echo "===== MENU DHCP LINUX ====="
+        echo "===== MENU DHCP FEDORA SERVER ====="
         echo "1. Instalar servicio DHCP"
         echo "2. Configurar servicio DHCP"
         echo "3. Monitorear servicio"
