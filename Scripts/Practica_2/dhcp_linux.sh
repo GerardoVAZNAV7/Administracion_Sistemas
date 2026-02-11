@@ -6,6 +6,38 @@ LEASE_FILE="/var/lib/dhcpd/dhcpd.leases"
 # ==============================
 # UTILIDADES IP
 # ==============================
+configurar_ip_servidor() {
+    local ip=$1
+    local iface=$2
+    local cidr=$3
+
+    echo "Asignando IP $ip/$cidr a la interfaz $iface"
+
+    ip addr flush dev $iface
+    ip addr add $ip/$cidr dev $iface
+    ip link set $iface up
+}
+
+mascara_a_cidr() {
+    local mask=$1
+    local cidr=0
+    IFS=. read -r o1 o2 o3 o4 <<< "$mask"
+    for o in $o1 $o2 $o3 $o4; do
+        case $o in
+            255) ((cidr+=8));;
+            254) ((cidr+=7));;
+            252) ((cidr+=6));;
+            248) ((cidr+=5));;
+            240) ((cidr+=4));;
+            224) ((cidr+=3));;
+            192) ((cidr+=2));;
+            128) ((cidr+=1));;
+            0) ;;
+        esac
+    done
+    echo $cidr
+}
+
 
 ip_a_entero() {
     IFS=. read -r o1 o2 o3 o4 <<< "$1"
@@ -135,6 +167,9 @@ configurar_dhcp() {
     SERVER_IP=$START
 
     detectar_interfaz "$SERVER_IP"
+    CIDR=$(mascara_a_cidr "$MASCARA")
+    configurar_ip_servidor "$SERVER_IP" "$INTERFAZ" "$CIDR"
+
 
     while true; do
         read -p "Tiempo de concesion (segundos): " LEASE
