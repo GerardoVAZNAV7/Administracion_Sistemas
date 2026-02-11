@@ -53,31 +53,59 @@ function Rango-Valido {
 function Calcular-RedMascara {
     param($ip1, $ip2)
 
-    [uint32]$n1 = Convertir-IPaEntero $ip1
-    [uint32]$n2 = Convertir-IPaEntero $ip2
+    $a = $ip1.Split('.') | ForEach-Object {[int]$_}
+    $b = $ip2.Split('.') | ForEach-Object {[int]$_}
 
-    [uint32]$diff = $n1 -bxor $n2
+    $mask = @(0,0,0,0)
+    $net  = @(0,0,0,0)
 
-    $bits = 32
-    while ($diff -gt 0) {
-        $diff = $diff -shr 1
-        $bits--
+    for ($i=0; $i -lt 4; $i++) {
+
+        $binA = [Convert]::ToString($a[$i],2).PadLeft(8,'0')
+        $binB = [Convert]::ToString($b[$i],2).PadLeft(8,'0')
+
+        $bits = ""
+        for ($j=0; $j -lt 8; $j++) {
+            if ($binA[$j] -eq $binB[$j]) {
+                $bits += $binA[$j]
+            } else {
+                $bits += "0"
+            }
+        }
+
+        $net[$i] = [Convert]::ToInt32($bits,2)
+
+        $maskBits = ""
+        for ($j=0; $j -lt 8; $j++) {
+            if ($binA[$j] -eq $binB[$j]) {
+                $maskBits += "1"
+            } else {
+                $maskBits += "0"
+            }
+        }
+
+        $mask[$i] = [Convert]::ToInt32($maskBits,2)
     }
 
-    [uint32]$mask = 0xFFFFFFFF
-    if ($bits -lt 32) {
-        $mask = $mask -shl (32 - $bits)
-    }
-
-    [uint32]$net = $n1 -band $mask
-
-    $global:MASCARA = Convertir-EnteroaIP $mask
-    $global:RED = Convertir-EnteroaIP $net
+    $global:MASCARA = $mask -join "."
+    $global:RED = $net -join "."
 }
 
 # ==============================
 # CONFIGURAR IP DEL SERVIDOR
 # ==============================
+
+function Mascara-A-Prefix {
+    param([string]$mask)
+
+    $prefix = 0
+    foreach ($o in $mask.Split('.')) {
+        $bin = [Convert]::ToString([int]$o,2)
+        $prefix += ($bin -replace '0','').Length
+    }
+    return $prefix
+}
+
 
 function Configurar-IPServidor {
     param(
@@ -96,33 +124,19 @@ function Configurar-IPServidor {
         return
     }
 
-   $prefix = 0
-foreach ($o in $mask.Split('.')) {
-    switch ([int]$o) {
-        255 { $prefix += 8 }
-        254 { $prefix += 7 }
-        252 { $prefix += 6 }
-        248 { $prefix += 5 }
-        240 { $prefix += 4 }
-        224 { $prefix += 3 }
-        192 { $prefix += 2 }
-        128 { $prefix += 1 }
-        0   { }
-    }
-}
+    $prefix = Mascara-A-Prefix $mask
 
-
-    # Elimina IPs anteriores
     Get-NetIPAddress -InterfaceIndex $adapter.InterfaceIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
     Remove-NetIPAddress -Confirm:$false
 
-    # Asigna IP nueva
     New-NetIPAddress `
         -IPAddress $ip `
         -PrefixLength $prefix `
         -InterfaceIndex $adapter.InterfaceIndex
 
     Write-Host "IP asignada:" $ip
+    Write-Host "Mascara:" $mask
+    Write-Host "Prefix:" $prefix
     Write-Host "Interfaz:" $adapter.Name
 }
 
@@ -194,7 +208,8 @@ function Configurar-DHCP {
     }
 
    Calcular-RedMascara $start $end
-   $serverIP = $start
+   $serverIP = Convertir-EnteroaIP ((Convertir-IPaEntero $RED) + 1)
+
 
    Configurar-IPServidor $serverIP $MASCARA
 
@@ -211,13 +226,16 @@ function Configurar-DHCP {
 
     $scopeId = $RED
 
-    Add-DhcpServerv4Scope `
-        -Name $scope `
-        -StartRange $start `
-        -EndRange $end `
-        -SubnetMask $MASCARA `
-        -LeaseDuration ([TimeSpan]::FromSeconds($lease)) `
-        -State Active
+$scopeObj = Add-DhcpServerv4Scope `
+    -Name $scope `
+    -StartRange $start `
+    -EndRange $end `
+    -SubnetMask $MASCARA `
+    -LeaseDuration ([TimeSpan]::FromSeconds($lease)) `
+    -State Active
+
+$scopeId = $scopeObj.ScopeId
+
 
     if ($router) {
         Set-DhcpServerv4OptionValue -ScopeId $scopeId -Router $router
