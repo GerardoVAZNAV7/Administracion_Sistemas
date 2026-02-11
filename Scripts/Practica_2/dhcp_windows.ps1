@@ -115,9 +115,8 @@ function Configurar-IPServidor {
 
     Write-Host "Configurando IP del servidor..."
 
-    $adapter = Get-NetAdapter |
-               Where-Object {$_.Status -eq "Up"} |
-               Select-Object -First 1
+$adapter = Get-NetAdapter -Name "Ethernet" -ErrorAction SilentlyContinue
+
 
     if (-not $adapter) {
         Write-Host "No se encontro interfaz de red activa"
@@ -187,6 +186,33 @@ function Limpiar-ScopesDHCP {
 }
 
 
+function Forzar-InterfazDHCP {
+    param(
+        [string]$InterfaceObjetivo = "Ethernet"
+    )
+
+    Write-Host "Configurando interfaz de escucha DHCP..."
+
+    $bindings = Get-DhcpServerv4Binding
+
+    foreach ($b in $bindings) {
+        if ($b.InterfaceAlias -eq $InterfaceObjetivo) {
+            Set-DhcpServerv4Binding `
+                -InterfaceAlias $b.InterfaceAlias `
+                -BindingState $true
+        }
+        else {
+            Set-DhcpServerv4Binding `
+                -InterfaceAlias $b.InterfaceAlias `
+                -BindingState $false
+        }
+    }
+
+    Restart-Service DHCPServer
+    Write-Host "DHCP ahora escucha solo en:" $InterfaceObjetivo
+}
+
+
 function Configurar-DHCP {
 
 
@@ -211,7 +237,9 @@ function Configurar-DHCP {
    $serverIP = Convertir-EnteroaIP ((Convertir-IPaEntero $RED) + 1)
 
 
-   Configurar-IPServidor $serverIP $MASCARA
+Configurar-IPServidor $serverIP $MASCARA
+
+Forzar-InterfazDHCP "Ethernet"
 
 
     do {
