@@ -4,12 +4,13 @@
 
 function Convertir-IPaEntero {
     param([string]$ip)
-    $oct = $ip.Split('.')
-    return ([int]$oct[0] -shl 24) -bor
-           ([int]$oct[1] -shl 16) -bor
-           ([int]$oct[2] -shl 8)  -bor
-           ([int]$oct[3])
+    $o = $ip.Split('.')
+    return ([uint32]$o[0] -shl 24) -bor
+           ([uint32]$o[1] -shl 16) -bor
+           ([uint32]$o[2] -shl 8)  -bor
+           ([uint32]$o[3])
 }
+
 
 function Convertir-EnteroaIP {
     param([int64]$num)
@@ -52,11 +53,10 @@ function Rango-Valido {
 function Calcular-RedMascara {
     param($ip1, $ip2)
 
-    $n1 = Convertir-IPaEntero $ip1
-    $n2 = Convertir-IPaEntero $ip2
+    [uint32]$n1 = Convertir-IPaEntero $ip1
+    [uint32]$n2 = Convertir-IPaEntero $ip2
 
-    # XOR para encontrar bits distintos
-    $diff = $n1 -bxor $n2
+    [uint32]$diff = $n1 -bxor $n2
 
     $bits = 32
     while ($diff -gt 0) {
@@ -64,18 +64,16 @@ function Calcular-RedMascara {
         $bits--
     }
 
-    # Generar mascara
-    $mask = ([uint32]0xFFFFFFFF) -shl (32 - $bits)
-    $mask = $mask -band 0xFFFFFFFF
+    [uint32]$mask = 0xFFFFFFFF
+    if ($bits -lt 32) {
+        $mask = $mask -shl (32 - $bits)
+    }
 
-    # Calcular red
-    $net = $n1 -band $mask
+    [uint32]$net = $n1 -band $mask
 
     $global:MASCARA = Convertir-EnteroaIP $mask
     $global:RED = Convertir-EnteroaIP $net
 }
-
-
 
 # ==============================
 # CONFIGURAR IP DEL SERVIDOR
