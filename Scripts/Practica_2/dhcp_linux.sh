@@ -227,6 +227,43 @@ monitoreo() {
     done
 }
 
+verificar_instalacion() {
+    echo "=== VERIFICACION DEL SERVICIO DHCP ==="
+    echo ""
+
+    if rpm -q dhcp-server &>/dev/null; then
+        echo "Paquete dhcp-server instalado"
+    else
+        echo "Paquete dhcp-server NO instalado"
+        return
+    fi
+
+    if systemctl list-unit-files | grep -q "^dhcpd.service"; then
+        echo "Servicio dhcpd registrado en systemd"
+    else
+        echo "Servicio dhcpd no registrado"
+        return
+    fi
+
+    estado=$(systemctl is-active dhcpd 2>/dev/null)
+
+    case "$estado" in
+        active)
+            echo "Servicio en ejecucion"
+            ;;
+        inactive)
+            echo "Servicio instalado pero detenido"
+            ;;
+        failed)
+            echo "Servicio instalado pero en estado FAILED"
+            ;;
+        *)
+            echo "Estado desconocido: $estado"
+            ;;
+    esac
+}
+
+
 # ==============================
 # MENU
 # ==============================
@@ -238,17 +275,20 @@ menu() {
         echo "1. Instalar servicio DHCP"
         echo "2. Configurar servicio DHCP"
         echo "3. Monitorear servicio"
-        echo "4. Salir"
+        echo "4. Verificar instalacion"
+        echo "5. Salir"
         read -p "Seleccione opcion: " op
 
         case $op in
             1) instalar_dhcp ;;
             2) configurar_dhcp ;;
             3) monitoreo ;;
-            4) exit ;;
+            4) verificar_instalacion ;;
+            5) exit ;;
             *) echo "Opcion invalida" ;;
         esac
     done
 }
+
 
 menu
