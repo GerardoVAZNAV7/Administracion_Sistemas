@@ -1,6 +1,6 @@
-# ==============================
+# =========================================
 # UTILIDADES IP
-# ==============================
+# =========================================
 
 function Convertir-IPaEntero {
     param([string]$ip)
@@ -11,9 +11,8 @@ function Convertir-IPaEntero {
            ([uint32]$o[3])
 }
 
-
 function Convertir-EnteroaIP {
-    param([int64]$num)
+    param([uint32]$num)
     return "$(($num -shr 24) -band 255).$((($num -shr 16) -band 255)).$((($num -shr 8) -band 255)).$($num -band 255)"
 }
 
@@ -22,33 +21,23 @@ function Validar-IP {
 
     if (-not ($ip -match '^([0-9]{1,3}\.){3}[0-9]{1,3}$')) { return $false }
 
-    $oct = $ip.Split('.')
-    foreach ($o in $oct) {
+    foreach ($o in $ip.Split('.')) {
         if ([int]$o -gt 255) { return $false }
     }
 
-    if ($ip -eq "0.0.0.0") { return $false }
-    if ($ip -eq "127.0.0.1") { return $false }
-    if ($ip -eq "255.255.255.255") { return $false }
+    if ($ip -in @("0.0.0.0","127.0.0.1","255.255.255.255")) { return $false }
 
     return $true
 }
 
 function Rango-Valido {
     param($start, $end)
-
-    if (-not (Validar-IP $start)) { return $false }
-    if (-not (Validar-IP $end)) { return $false }
-
-    $s = Convertir-IPaEntero $start
-    $e = Convertir-IPaEntero $end
-
-    return ($s -lt $e)
+    return (Convertir-IPaEntero $start) -lt (Convertir-IPaEntero $end)
 }
 
-# ==============================
-# CALCULO DE RED Y MASCARA
-# ==============================
+# =========================================
+# CALCULO RED Y MASCARA (ESTILO LINUX)
+# =========================================
 
 function Calcular-RedMascara {
     param($ip1, $ip2)
@@ -56,34 +45,23 @@ function Calcular-RedMascara {
     $n1 = Convertir-IPaEntero $ip1
     $n2 = Convertir-IPaEntero $ip2
 
-    $xor = $n1 -bxor $n2
+    $diff = $n1 -bxor $n2
+    $bits = 32
 
-    $prefix = 32
-    for ($i = 31; $i -ge 0; $i--) {
-        if (($xor -band (1 -shl $i)) -ne 0) {
-            $prefix = 31 - $i
-            break
-        }
+    while ($diff -gt 0) {
+        $diff = $diff -shr 1
+        $bits--
     }
 
-    if ($prefix -eq 32) { $prefix = 32 }
+    $mask = ([uint32]0xFFFFFFFF -shl (32-$bits)) -band 0xFFFFFFFF
+    $net = $n1 -band $mask
 
-    $maskInt = ([uint32]0xFFFFFFFF) -shl (32 - $prefix)
-    $maskInt = $maskInt -band 0xFFFFFFFF
-
-    $netInt = $n1 -band $maskInt
-
-    $global:MASCARA = Convertir-EnteroaIP $maskInt
-    $global:RED = Convertir-EnteroaIP $netInt
+    $global:RED = Convertir-EnteroaIP $net
+    $global:MASCARA = Convertir-EnteroaIP $mask
 }
-
-# ==============================
-# CONFIGURAR IP DEL SERVIDOR
-# ==============================
 
 function Mascara-A-Prefix {
     param([string]$mask)
-
     $prefix = 0
     foreach ($o in $mask.Split('.')) {
         $bin = [Convert]::ToString([int]$o,2)
@@ -92,20 +70,16 @@ function Mascara-A-Prefix {
     return $prefix
 }
 
+# =========================================
+# CONFIGURAR IP SERVIDOR (ETHERNET INTERNA)
+# =========================================
 
 function Configurar-IPServidor {
-    param(
-        [string]$ip,
-        [string]$mask
-    )
+    param([string]$ip,[string]$mask)
 
-    Write-Host "Configurando IP del servidor..."
-
-$adapter = Get-NetAdapter -Name "Ethernet" -ErrorAction SilentlyContinue
-
-
+    $adapter = Get-NetAdapter -Name "Ethernet" -ErrorAction SilentlyContinue
     if (-not $adapter) {
-        Write-Host "No se encontro interfaz de red activa"
+        Write-Host "No se encontro interfaz Ethernet"
         return
     }
 
@@ -119,89 +93,63 @@ $adapter = Get-NetAdapter -Name "Ethernet" -ErrorAction SilentlyContinue
         -PrefixLength $prefix `
         -InterfaceIndex $adapter.InterfaceIndex
 
-    Write-Host "IP asignada:" $ip
+    Write-Host "Servidor configurado en Ethernet"
+    Write-Host "IP:" $ip
     Write-Host "Mascara:" $mask
-    Write-Host "Prefix:" $prefix
-    Write-Host "Interfaz:" $adapter.Name
 }
 
+# =========================================
+# INSTALACION DHCP
+# =========================================
 
-# ==============================
-# INSTALACION
-# ==============================
+function DHCP-Instalado {
+    (Get-WindowsFeature DHCP).Installed
+}
 
 function Instalar-DHCP {
-    $feature = Get-WindowsFeature DHCP
 
-    if ($feature.Installed) {
+    if (DHCP-Instalado) {
         do {
-            $op = Read-Host "El servicio ya esta instalado. ¿Quieres reinstalarlo? (y/n)"
-        } until ($op -eq "y" -or $op -eq "n")
+            $op = Read-Host "DHCP ya instalado. ¿Reinstalar? (y/n)"
+        } until ($op -in @("y","n"))
 
-        if ($op -eq "n") {
-            Write-Host "Instalacion cancelada."
-            return
-        }
+        if ($op -eq "n") { return }
 
         Uninstall-WindowsFeature DHCP -IncludeManagementTools | Out-Null
     }
 
-    Write-Host "Instalando DHCP..."
     Install-WindowsFeature DHCP -IncludeManagementTools | Out-Null
     Add-DhcpServerInDC | Out-Null
-    Write-Host "Instalacion completada."
+
+    Write-Host "DHCP instalado correctamente"
 }
 
-# ==============================
-# CONFIGURACION
-# ==============================
+# =========================================
+# CONFIGURACION DHCP
+# =========================================
 
 function Limpiar-ScopesDHCP {
-
-    $scopes = Get-DhcpServerv4Scope -ErrorAction SilentlyContinue
-
-    if ($scopes) {
-        Write-Host "Eliminando configuracion DHCP anterior..."
-
-        foreach ($s in $scopes) {
-            Remove-DhcpServerv4Scope -ScopeId $s.ScopeId -Force
-        }
-
-        Write-Host "Scopes anteriores eliminados"
-    }
+    Get-DhcpServerv4Scope -ErrorAction SilentlyContinue |
+    Remove-DhcpServerv4Scope -Force -ErrorAction SilentlyContinue
 }
-
 
 function Forzar-InterfazDHCP {
-    param(
-        [string]$InterfaceObjetivo = "Ethernet"
-    )
-
-    Write-Host "Configurando interfaz de escucha DHCP..."
-
     $bindings = Get-DhcpServerv4Binding
-
     foreach ($b in $bindings) {
-        if ($b.InterfaceAlias -eq $InterfaceObjetivo) {
-            Set-DhcpServerv4Binding `
-                -InterfaceAlias $b.InterfaceAlias `
-                -BindingState $true
-        }
-        else {
-            Set-DhcpServerv4Binding `
-                -InterfaceAlias $b.InterfaceAlias `
-                -BindingState $false
-        }
+        Set-DhcpServerv4Binding `
+            -InterfaceAlias $b.InterfaceAlias `
+            -BindingState ($b.InterfaceAlias -eq "Ethernet")
     }
-
     Restart-Service DHCPServer
-    Write-Host "DHCP ahora escucha solo en:" $InterfaceObjetivo
+    Write-Host "DHCP escuchando solo en Ethernet"
 }
-
 
 function Configurar-DHCP {
 
-
+    if (-not (DHCP-Instalado)) {
+        Write-Host "ERROR: DHCP no instalado"
+        return
+    }
 
     Write-Host "=== CONFIGURACION DHCP ==="
     Limpiar-ScopesDHCP
@@ -211,25 +159,27 @@ function Configurar-DHCP {
     do { $start = Read-Host "IP inicial" }
     until (Validar-IP $start)
 
-    do { $end = Read-Host "IP final" }
-    until (Validar-IP $end)
+    do {
+        $end = Read-Host "IP final"
+        if (-not (Validar-IP $end)) {
+            Write-Host "IP invalida"
+            $ok = $false
+        }
+        else { $ok = $true }
+    } until ($ok)
 
     if (-not (Rango-Valido $start $end)) {
-        Write-Host "La IP inicial debe ser menor que la final"
+        Write-Host "La IP final debe ser mayor"
         return
     }
 
-   Calcular-RedMascara $start $end
-   $serverIP = Convertir-EnteroaIP ((Convertir-IPaEntero $RED) + 1)
+    Calcular-RedMascara $start $end
 
-
-Configurar-IPServidor $serverIP $MASCARA
-
-Forzar-InterfazDHCP "Ethernet"
-
+    Configurar-IPServidor $start $MASCARA
+    Forzar-InterfazDHCP
 
     do {
-        $lease = Read-Host "Tiempo de concesion en segundos"
+        $lease = Read-Host "Tiempo de concesion (segundos)"
     } until ($lease -match '^[0-9]+$' -and [int]$lease -gt 0)
 
     $router = Read-Host "Gateway (opcional)"
@@ -238,128 +188,103 @@ Forzar-InterfazDHCP "Ethernet"
     $dns = Read-Host "DNS (opcional)"
     if (-not (Validar-IP $dns)) { $dns = $null }
 
-    $scopeId = $RED
-
-$scopeObj = Add-DhcpServerv4Scope `
-    -Name $scope `
-    -StartRange $start `
-    -EndRange $end `
-    -SubnetMask $MASCARA `
-    -LeaseDuration ([TimeSpan]::FromSeconds($lease)) `
-    -State Active
-
-$scopeId = $scopeObj.ScopeId
-
+    $scopeObj = Add-DhcpServerv4Scope `
+        -Name $scope `
+        -StartRange $start `
+        -EndRange $end `
+        -SubnetMask $MASCARA `
+        -LeaseDuration ([TimeSpan]::FromSeconds($lease)) `
+        -State Active
 
     if ($router) {
-        Set-DhcpServerv4OptionValue -ScopeId $scopeId -Router $router
+        Set-DhcpServerv4OptionValue -ScopeId $scopeObj.ScopeId -Router $router
     }
 
     if ($dns) {
-        Set-DhcpServerv4OptionValue -ScopeId $scopeId -DnsServer $dns
+        Set-DhcpServerv4OptionValue -ScopeId $scopeObj.ScopeId -DnsServer $dns
     }
 
     Write-Host ""
-    Write-Host "Configuracion aplicada correctamente"
-    Write-Host "Red: $RED"
-    Write-Host "Mascara: $MASCARA"
+    Write-Host "Servidor DHCP configurado correctamente"
+    Write-Host "Red:" $RED
+    Write-Host "Mascara:" $MASCARA
 }
 
-# ==============================
+# =========================================
 # MONITOREO
-# ==============================
+# =========================================
 
 function Monitoreo-DHCP {
+
+    if (-not (DHCP-Instalado)) {
+        Write-Host "DHCP no instalado"
+        return
+    }
 
     Write-Host "CTRL + C para salir"
 
     while ($true) {
         Clear-Host
-
-        $serv = Get-Service DHCPServer
-        Write-Host "Estado del servicio:" $serv.Status
+        Write-Host "Estado del servicio:"
+        Get-Service DHCPServer
         Write-Host ""
-
-        $scopes = Get-DhcpServerv4Scope
-
-        foreach ($s in $scopes) {
-            Write-Host "Ambito:" $s.ScopeId
-            Write-Host "Rango:" $s.StartRange "-" $s.EndRange
-            Write-Host ""
-
-            Get-DhcpServerv4Lease -ScopeId $s.ScopeId -ErrorAction SilentlyContinue |
-            Select-Object IPAddress, HostName, AddressState, LeaseExpiryTime
-
-            Write-Host ""
-        }
-
+        Get-DhcpServerv4Scope
+        Write-Host ""
+        Get-DhcpServerv4Lease -ErrorAction SilentlyContinue
         Start-Sleep 5
     }
 }
 
-# ==============================
-# VERIFICAR INSTALACION
-# ==============================
+# =========================================
+# VERIFICACION
+# =========================================
 
 function Verificar-Instalacion {
 
-    Write-Host "=== VERIFICACION DEL SERVICIO DHCP ==="
-    Write-Host ""
+    Write-Host "=== VERIFICACION DHCP ==="
 
-    $feature = Get-WindowsFeature DHCP
-
-    if ($feature.Installed) {
+    if (DHCP-Instalado) {
         Write-Host "Rol DHCP instalado"
-    } else {
+    }
+    else {
         Write-Host "Rol DHCP NO instalado"
         return
     }
 
     $serv = Get-Service DHCPServer -ErrorAction SilentlyContinue
 
-    if (-not $serv) {
-        Write-Host "Servicio DHCP no registrado"
-        return
+    if ($serv.Status -eq "Running") {
+        Write-Host "Servicio en ejecucion"
     }
-
-    switch ($serv.Status) {
-        "Running" { Write-Host "Servicio en ejecucion" }
-        "Stopped" { Write-Host "Servicio instalado pero detenido" }
-        default { Write-Host "Estado:" $serv.Status }
+    else {
+        Write-Host "Servicio detenido"
     }
 }
 
-
-# ==============================
+# =========================================
 # MENU
-# ==============================
+# =========================================
 
 function Menu {
     do {
         Write-Host ""
-        Write-Host "===== MENU DHCP WINDOWS SERVER ====="
+        Write-Host "===== DHCP WINDOWS SERVER 2022 ====="
+        Write-Host "Estado:" (if (DHCP-Instalado) {"INSTALADO"} else {"NO INSTALADO"})
+        Write-Host ""
         Write-Host "1. Instalar servicio DHCP"
         Write-Host "2. Configurar servicio DHCP"
         Write-Host "3. Monitorear servicio"
         Write-Host "4. Verificar instalacion"
         Write-Host "5. Salir"
 
+        $op = Read-Host "Seleccione opcion"
 
-        $op = Read-Host "Seleccione una opcion"
+        if ($op -eq "1") { Instalar-DHCP }
+        elseif ($op -eq "2") { Configurar-DHCP }
+        elseif ($op -eq "3") { Monitoreo-DHCP }
+        elseif ($op -eq "4") { Verificar-Instalacion }
 
-       switch ($op) {
-    "1" { Instalar-DHCP }
-    "2" { Configurar-DHCP }
-    "3" { Monitoreo-DHCP }
-    "4" { Verificar-Instalacion }
-    "5" { Write-Host "Saliendo..." }
-    default { Write-Host "Opcion invalida" }
-     }
-
-} while ($op -ne "5")
-
-
-    
+    } while ($op -ne "5")
 }
 
 Menu
