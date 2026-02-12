@@ -53,42 +53,28 @@ function Rango-Valido {
 function Calcular-RedMascara {
     param($ip1, $ip2)
 
-    $a = $ip1.Split('.') | ForEach-Object {[int]$_}
-    $b = $ip2.Split('.') | ForEach-Object {[int]$_}
+    $n1 = Convertir-IPaEntero $ip1
+    $n2 = Convertir-IPaEntero $ip2
 
-    $mask = @(0,0,0,0)
-    $net  = @(0,0,0,0)
+    $xor = $n1 -bxor $n2
 
-    for ($i=0; $i -lt 4; $i++) {
-
-        $binA = [Convert]::ToString($a[$i],2).PadLeft(8,'0')
-        $binB = [Convert]::ToString($b[$i],2).PadLeft(8,'0')
-
-        $bits = ""
-        for ($j=0; $j -lt 8; $j++) {
-            if ($binA[$j] -eq $binB[$j]) {
-                $bits += $binA[$j]
-            } else {
-                $bits += "0"
-            }
+    $prefix = 32
+    for ($i = 31; $i -ge 0; $i--) {
+        if (($xor -band (1 -shl $i)) -ne 0) {
+            $prefix = 31 - $i
+            break
         }
-
-        $net[$i] = [Convert]::ToInt32($bits,2)
-
-        $maskBits = ""
-        for ($j=0; $j -lt 8; $j++) {
-            if ($binA[$j] -eq $binB[$j]) {
-                $maskBits += "1"
-            } else {
-                $maskBits += "0"
-            }
-        }
-
-        $mask[$i] = [Convert]::ToInt32($maskBits,2)
     }
 
-    $global:MASCARA = $mask -join "."
-    $global:RED = $net -join "."
+    if ($prefix -eq 32) { $prefix = 32 }
+
+    $maskInt = ([uint32]0xFFFFFFFF) -shl (32 - $prefix)
+    $maskInt = $maskInt -band 0xFFFFFFFF
+
+    $netInt = $n1 -band $maskInt
+
+    $global:MASCARA = Convertir-EnteroaIP $maskInt
+    $global:RED = Convertir-EnteroaIP $netInt
 }
 
 # ==============================
