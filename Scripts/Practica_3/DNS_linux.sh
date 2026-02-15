@@ -87,7 +87,7 @@ alta_dominio() {
 
     echo "Creando zona DNS automatica..."
 
-cat > $RUTA_ZONA <<EOF
+cat > "$RUTA_ZONA" <<EOF
 \$TTL 86400
 @   IN  SOA ns.$DOMINIO. root.$DOMINIO. (
         $SERIAL
@@ -103,6 +103,12 @@ ns      IN  A   $IP_CLIENTE
 @       IN  A   $IP_CLIENTE
 www     IN  A   $IP_CLIENTE
 EOF
+
+
+chown named:named "$RUTA_ZONA"
+chmod 640 "$RUTA_ZONA"
+restorecon "$RUTA_ZONA" 2>/dev/null
+
 
     echo "Registrando zona en named.conf..."
 
@@ -165,7 +171,8 @@ consultar_dominios() {
     printf "%-25s %-15s\n" "-------------------------" "---------------"
 
     # Extrae solo dominios válidos
-    DOMS=$(grep -oP 'zone\s+"\K[^"]+' $CONFIG_LOCAL)
+   DOMS=$(grep 'type master' -B1 $CONFIG_LOCAL | grep 'zone "' | cut -d '"' -f2)
+
 
     if [ -z "$DOMS" ]; then
         echo "No hay dominios configurados"
