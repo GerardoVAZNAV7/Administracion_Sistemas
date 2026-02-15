@@ -44,20 +44,91 @@ configurar_ip_fija() {
 # =========================================
 # INSTALAR BIND
 # =========================================
+# =========================================
+# DETECTAR INTERFAZ DE RED INTERNA
+# (adaptador 1 = sin gateway por defecto)
+# =========================================
+
+detectar_red_interna() {
+    ip route | grep default | awk '{print $5}' > /tmp/iface_nat
+    IFACE_NAT=$(cat /tmp/iface_nat)
+
+    for i in $(ls /sys/class/net | grep -v lo); do
+        if [ "$i" != "$IFACE_NAT" ]; then
+            echo $i
+            return
+        fi
+    done
+}
+
+# =========================================
+# CONFIGURACION AUTOMATICA RED SERVIDOR
+# =========================================
+
+configurar_red_servidor_auto() {
+
+    echo "Configurando red automaticamente..."
+
+    IFACE_INTERNA=$(detectar_red_interna)
+
+    if [ -z "$IFACE_INTERNA" ]; then
+        echo "No se pudo detectar la red interna"
+        return 1
+    fi
+
+    echo "Red interna detectada: $IFACE_INTERNA"
+
+    read -p "IP para el servidor en red interna: " IP_SERVER
+    validar_ip "$IP_SERVER" || { echo "IP invalida"; return 1; }
+
+    nmcli con mod "$IFACE_INTERNA" ipv4.addresses "$IP_SERVER/24"
+    nmcli con mod "$IFACE_INTERNA" ipv4.method manual
+    nmcli con up "$IFACE_INTERNA"
+
+    echo "IP fija aplicada a red interna"
+}
+
+# =========================================
+# CONFIGURAR BIND PARA RED
+# =========================================
+
+configurar_bind_red() {
+
+    echo "Configurando named para aceptar conexiones..."
+
+    sed -i 's/listen-on port 53 {[^}]*};/listen-on port 53 { any; };/' /etc/named.conf
+    sed -i 's/allow-query[^;]*;/allow-query { any; };/' /etc/named.conf
+
+    firewall-cmd --permanent --add-service=dns >/dev/null 2>&1
+    firewall-cmd --reload >/dev/null 2>&1
+
+    systemctl restart named
+
+    echo "BIND configurado para red interna"
+}
+
+
 
 instalar_dns() {
 
-    if rpm -q bind &>/dev/null; then
+    echo "=== INSTALACION AUTOMATICA DNS ==="
+
+    if ! rpm -q bind &>/dev/null; then
+        echo "Instalando BIND..."
+        dnf install -y bind bind-utils bind-doc
+    else
         echo "BIND ya instalado"
-        return
     fi
 
-    echo "Instalando BIND..."
-    dnf install -y bind bind-utils bind-doc
     systemctl enable named
     systemctl start named
-    echo "Instalacion completada"
+
+    configurar_red_servidor_auto
+    configurar_bind_red
+
+    echo "DNS instalado y listo para red interna"
 }
+
 
 # =========================================
 # ALTA DE DOMINIO
