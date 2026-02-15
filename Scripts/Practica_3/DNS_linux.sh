@@ -164,7 +164,8 @@ consultar_dominios() {
     printf "%-25s %-15s\n" "DOMINIO" "IP"
     printf "%-25s %-15s\n" "-------------------------" "---------------"
 
-    DOMS=$(grep 'zone "' $CONFIG_LOCAL | cut -d '"' -f2)
+    # Extrae solo dominios válidos
+    DOMS=$(grep -oP 'zone\s+"\K[^"]+' $CONFIG_LOCAL)
 
     if [ -z "$DOMS" ]; then
         echo "No hay dominios configurados"
@@ -172,21 +173,22 @@ consultar_dominios() {
     fi
 
     for d in $DOMS; do
+
         ZONA_FILE="$ZONA_DIR/db.$d"
 
-        if [ -f "$ZONA_FILE" ]; then
-            # Obtiene la IP del registro A principal (@)
-            IP=$(grep -E "^[[:space:]]*@.*IN[[:space:]]+A" "$ZONA_FILE" | awk '{print $NF}')
-
-            # Si no encuentra IP exacta, intenta con ns
-            if [ -z "$IP" ]; then
-                IP=$(grep -E "^[[:space:]]*ns.*IN[[:space:]]+A" "$ZONA_FILE" | awk '{print $NF}')
-            fi
-
-            printf "%-25s %-15s\n" "$d" "$IP"
-        else
-            printf "%-25s %-15s\n" "$d" "Archivo no encontrado"
+        if [ ! -f "$ZONA_FILE" ]; then
+            printf "%-25s %-15s\n" "$d" "Zona no encontrada"
+            continue
         fi
+
+        # Extraer IP del registro A principal
+        IP=$(awk '$1=="@" && $3=="A" {print $4}' "$ZONA_FILE")
+
+        if [ -z "$IP" ]; then
+            IP=$(awk '$1=="ns" && $3=="A" {print $4}' "$ZONA_FILE")
+        fi
+
+        printf "%-25s %-15s\n" "$d" "$IP"
     done
 
     echo ""
