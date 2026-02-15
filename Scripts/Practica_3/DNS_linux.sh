@@ -157,7 +157,12 @@ baja_dominio() {
 
 consultar_dominios() {
 
-    echo "=== DOMINIOS CONFIGURADOS ==="
+    echo ""
+    echo "==============================="
+    echo "   DOMINIOS CONFIGURADOS DNS"
+    echo "==============================="
+    printf "%-25s %-15s\n" "DOMINIO" "IP"
+    printf "%-25s %-15s\n" "-------------------------" "---------------"
 
     DOMS=$(grep 'zone "' $CONFIG_LOCAL | cut -d '"' -f2)
 
@@ -167,11 +172,26 @@ consultar_dominios() {
     fi
 
     for d in $DOMS; do
-        echo "Dominio: $d"
-        echo "Archivo de zona: db.$d"
-        echo ""
+        ZONA_FILE="$ZONA_DIR/db.$d"
+
+        if [ -f "$ZONA_FILE" ]; then
+            # Obtiene la IP del registro A principal (@)
+            IP=$(grep -E "^[[:space:]]*@.*IN[[:space:]]+A" "$ZONA_FILE" | awk '{print $NF}')
+
+            # Si no encuentra IP exacta, intenta con ns
+            if [ -z "$IP" ]; then
+                IP=$(grep -E "^[[:space:]]*ns.*IN[[:space:]]+A" "$ZONA_FILE" | awk '{print $NF}')
+            fi
+
+            printf "%-25s %-15s\n" "$d" "$IP"
+        else
+            printf "%-25s %-15s\n" "$d" "Archivo no encontrado"
+        fi
     done
+
+    echo ""
 }
+
 
 # =========================================
 # PROBAR DNS
