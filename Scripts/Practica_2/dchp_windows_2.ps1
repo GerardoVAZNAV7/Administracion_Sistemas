@@ -161,7 +161,7 @@ function Configurar-DHCP {
         -EndRange $end `
         -SubnetMask $mask `
         -State Active
-
+	-PassThru
     $gateway = Read-Host "Gateway (opcional)"
     if (Validar-IP $gateway) {
         Set-DhcpServerv4OptionValue -ScopeId $scopeObj.ScopeId -Router $gateway
