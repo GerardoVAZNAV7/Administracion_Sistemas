@@ -160,7 +160,7 @@ function Configurar-DHCP {
         -StartRange $poolStart `
         -EndRange $end `
         -SubnetMask $mask `
-        -State Active
+        -State Active `
 	-PassThru
     $gateway = Read-Host "Gateway (opcional)"
     if (Validar-IP $gateway) {
