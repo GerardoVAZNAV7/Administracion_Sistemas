@@ -180,8 +180,28 @@ configurar_dhcp() {
     read -p "Gateway (opcional): " ROUTER
     [[ -n "$ROUTER" ]] && ! validar_ip "$ROUTER" && ROUTER=""
 
-    read -p "DNS (opcional): " DNS
-    [[ -n "$DNS" ]] && ! validar_ip "$DNS" && DNS=""
+   DNS=""
+
+read -p "DNS principal,secundario (opcional): " DNS_INPUT
+
+if [[ -n "$DNS_INPUT" ]]; then
+    IFS=',' read -r DNS1 DNS2 <<< "$DNS_INPUT"
+
+    if validar_ip "$DNS1"; then
+        DNS="$DNS1"
+
+        if [[ -n "$DNS2" ]]; then
+            if validar_ip "$DNS2"; then
+                DNS="$DNS1, $DNS2"
+            else
+                echo "DNS secundario invalido, se usara solo el principal"
+            fi
+        fi
+    else
+        echo "DNS principal invalido, no se configurara DNS"
+        DNS=""
+    fi
+fi
 
     cat > $CONFIG_FILE <<EOF
 default-lease-time $LEASE;

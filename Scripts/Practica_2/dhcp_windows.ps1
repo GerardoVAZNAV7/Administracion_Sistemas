@@ -2,6 +2,37 @@
 # UTILIDADES IP
 # =========================================
 
+function Procesar-DNS {
+    param([string]$entrada)
+
+    if ([string]::IsNullOrWhiteSpace($entrada)) {
+        return $null
+    }
+
+    $partes = $entrada.Split(",")
+
+    $dnsValidos = @()
+
+    if (Validar-IP $partes[0]) {
+        $dnsValidos += $partes[0]
+
+        if ($partes.Count -gt 1 -and -not [string]::IsNullOrWhiteSpace($partes[1])) {
+            if (Validar-IP $partes[1]) {
+                $dnsValidos += $partes[1]
+            }
+            else {
+                Write-Host "DNS secundario invalido, se usara solo el principal"
+            }
+        }
+    }
+    else {
+        Write-Host "DNS principal invalido, no se configurara DNS"
+        return $null
+    }
+
+    return $dnsValidos
+}
+
 function Validar-IP {
     param([string]$ip)
 
@@ -116,14 +147,30 @@ function Configurar-DHCP {
     Configurar-IPServidor $start $mask
     Forzar-InterfazDHCP
 
-    $scopeObj = Add-DhcpServerv4Scope `
-        -Name $scope `
-        -StartRange $start `
-        -EndRange $end `
-        -SubnetMask $mask `
-        -State Active
+   $scopeObj = Add-DhcpServerv4Scope `
+    -Name $scope `
+    -StartRange $start `
+    -EndRange $end `
+    -SubnetMask $mask `
+    -State Active
 
-    Write-Host "Scope creado correctamente"
+Write-Host "Scope creado correctamente"
+
+# ==============================
+# DNS PRINCIPAL Y SECUNDARIO
+# ==============================
+
+$dnsInput = Read-Host "DNS principal,secundario (opcional)"
+
+$dnsLista = Procesar-DNS $dnsInput
+
+if ($dnsLista) {
+    Set-DhcpServerv4OptionValue `
+        -ScopeId $scopeObj.ScopeId `
+        -DnsServer $dnsLista
+
+    Write-Host "DNS configurado correctamente"
+}
 }
 
 # =========================================

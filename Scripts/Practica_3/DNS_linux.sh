@@ -1,340 +1,243 @@
+#!/bin/bash
 
+CONF="/etc/named.conf"
+ZONE_DIR="/var/named"
 
-CONFIG_LOCAL="/etc/named.conf"
-ZONA_DIR="/var/named"
-
-# =========================================
-# VALIDACIONES IP
-# =========================================
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
 validar_ip() {
-    [[ $1 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
-    for o in ${1//./ }; do
-        ((o>=0 && o<=255)) || return 1
+    local ip=$1
+    local regex='^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+    [[ ! $ip =~ $regex ]] && return 1
+    IFS='.' read -r -a octs <<< "$ip"
+    for o in "${octs[@]}"; do
+        [[ $o -lt 0 || $o -gt 255 ]] && return 1
     done
     return 0
 }
 
-# =========================================
-# DETECTAR IP FIJA
-# =========================================
+#ELIMINAR DOMINIOS
+opcion_borrar() {
+    echo "__________________________________________"
 
-tiene_ip_fija() {
-    ip -4 addr show | grep -v dynamic | grep inet >/dev/null
-}
+    mapfile -t DOMINIOS < <(grep 'zone "' "$CONF" | awk '{print $2}' | tr -d '"' | grep -v '^\.$\|^0\.\|^1\.\|^2\.')
 
-configurar_ip_fija() {
-
-    echo "=== CONFIGURAR IP FIJA ==="
-
-    while true; do
-        read -p "IP del servidor Fedora: " IP_SERVER
-        validar_ip "$IP_SERVER" && break || echo "IP invalida"
-    done
-
-    read -p "Interfaz de red (ej: enp0s3): " IFACE
-
-    nmcli con mod "$IFACE" ipv4.addresses "$IP_SERVER/24"
-    nmcli con mod "$IFACE" ipv4.method manual
-    nmcli con up "$IFACE"
-
-    echo "IP fija configurada"
-}
-
-# =========================================
-# INSTALAR BIND
-# =========================================
-# =========================================
-# DETECTAR INTERFAZ DE RED INTERNA
-# (adaptador 1 = sin gateway por defecto)
-# =========================================
-
-detectar_red_interna() {
-    ip route | grep default | awk '{print $5}' > /tmp/iface_nat
-    IFACE_NAT=$(cat /tmp/iface_nat)
-
-    for i in $(ls /sys/class/net | grep -v lo); do
-        if [ "$i" != "$IFACE_NAT" ]; then
-            echo $i
-            return
-        fi
-    done
-}
-
-# =========================================
-# CONFIGURACION AUTOMATICA RED SERVIDOR
-# =========================================
-
-configurar_red_servidor_auto() {
-
-    echo "Configurando red automaticamente..."
-
-    IFACE_INTERNA=$(detectar_red_interna)
-
-    if [ -z "$IFACE_INTERNA" ]; then
-        echo "No se pudo detectar la red interna"
-        return 1
-    fi
-
-    echo "Red interna detectada: $IFACE_INTERNA"
-
-    read -p "IP para el servidor en red interna: " IP_SERVER
-    validar_ip "$IP_SERVER" || { echo "IP invalida"; return 1; }
-
-    nmcli con mod "$IFACE_INTERNA" ipv4.addresses "$IP_SERVER/24"
-    nmcli con mod "$IFACE_INTERNA" ipv4.method manual
-    nmcli con up "$IFACE_INTERNA"
-
-    echo "IP fija aplicada a red interna"
-}
-
-# =========================================
-# CONFIGURAR BIND PARA RED
-# =========================================
-
-configurar_bind_red() {
-
-    echo "Configurando named para aceptar conexiones..."
-
-    sed -i 's/listen-on port 53 {[^}]*};/listen-on port 53 { any; };/' /etc/named.conf
-    sed -i 's/allow-query[^;]*;/allow-query { any; };/' /etc/named.conf
-
-    firewall-cmd --permanent --add-service=dns >/dev/null 2>&1
-    firewall-cmd --reload >/dev/null 2>&1
-
-    systemctl restart named
-
-    echo "BIND configurado para red interna"
-}
-
-
-
-instalar_dns() {
-
-    echo "=== INSTALACION AUTOMATICA DNS ==="
-
-    if ! rpm -q bind &>/dev/null; then
-        echo "Instalando BIND..."
-        dnf install -y bind bind-utils bind-doc
-    else
-        echo "BIND ya instalado"
-    fi
-
-    systemctl enable named
-    systemctl start named
-
-    configurar_red_servidor_auto
-    configurar_bind_red
-
-    echo "DNS instalado y listo para red interna"
-}
-
-
-# =========================================
-# ALTA DE DOMINIO
-# =========================================
-
-alta_dominio() {
-
-    echo "=== ALTA DE DOMINIO ==="
-
-    read -p "Nombre del dominio (ej: reprobados.com): " DOMINIO
-
-    # VALIDAR QUE NO EXISTA
-    if grep -q "zone \"$DOMINIO\"" $CONFIG_LOCAL; then
-        echo "El dominio ya existe"
+    if [[ ${#DOMINIOS[@]} -eq 0 ]]; then
+        echo -e "${YELLOW}No hay dominios para eliminar.${NC}"
+        read -p "Enter para continuar..."
         return
     fi
 
-    # VALIDAR IP DEL CLIENTE
+    echo "Dominios configurados:"
+    echo ""
+    for i in "${!DOMINIOS[@]}"; do
+        echo "  $((i+1))) ${DOMINIOS[$i]}"
+    done
+    echo "  0) Cancelar"
+    echo ""
+
     while true; do
-        read -p "IP del cliente Ubuntu (asignada por DHCP): " IP_CLIENTE
-        validar_ip "$IP_CLIENTE" && break || echo "IP invalida"
+        read -p "Selecciona dominio: " SEL
+
+        if [[ "$SEL" == "0" ]]; then
+            echo "Operacion cancelada"
+            return
+        fi
+
+        if [[ "$SEL" =~ ^[0-9]+$ ]] && ((SEL>=1 && SEL<=${#DOMINIOS[@]})); then
+            break
+        fi
+
+        echo -e "${RED}Opcion invalida${NC}"
     done
 
-    ARCHIVO_ZONA="db.$DOMINIO"
-    RUTA_ZONA="$ZONA_DIR/$ARCHIVO_ZONA"
+    ZONA="${DOMINIOS[$((SEL-1))]}"
+    ARCHIVO_ZONA="$ZONE_DIR/${ZONA}.zone"
+
+    echo ""
+    echo -e "Eliminar dominio: ${YELLOW}$ZONA${NC}"
+    read -p "Confirmar (s/n): " CONFIRM
+
+    [[ "$CONFIRM" != "s" && "$CONFIRM" != "S" ]] && {
+        echo "Cancelado"
+        return
+    }
+
+    sudo cp "$CONF" "${CONF}.bak"
+
+    sudo awk '
+        /zone "'"$ZONA"'"/ { dentro=1; prof=0 }
+        dentro {
+            prof += gsub(/{/, "{")
+            prof -= gsub(/}/, "}")
+            if (prof <= 0) { dentro=0 }
+            next
+        }
+        { print }
+    ' "$CONF" > /tmp/named_tmp.conf && sudo mv /tmp/named_tmp.conf "$CONF"
+
+    if [[ -f "$ARCHIVO_ZONA" ]]; then
+        sudo rm -f "$ARCHIVO_ZONA"
+        echo "Archivo de zona eliminado"
+    fi
+
+    if sudo named-checkconf &>/dev/null; then
+        sudo systemctl restart named
+        echo -e "${GREEN}Dominio eliminado correctamente${NC}"
+    else
+        echo -e "${RED}Error en configuracion, restaurando respaldo${NC}"
+        sudo cp "${CONF}.bak" "$CONF"
+        sudo systemctl restart named
+    fi
+
+    read -p "Enter para continuar..."
+}
+
+# =========================================
+# VERIFICAR INSTALACION
+# =========================================
+opcion_verificar() {
+    echo "__________________________________________"
+    echo "Verificando instalacion DNS..."
+
+    if rpm -q bind &>/dev/null; then
+        echo -e "${GREEN}BIND instalado.${NC}"
+        systemctl is-active named
+        systemctl status named --no-pager | head -15
+    else
+        echo -e "${RED}BIND NO instalado.${NC}"
+    fi
+
+    read -p "Enter para continuar..."
+}
+
+# =========================================
+# INSTALAR DNS EN FEDORA
+# =========================================
+opcion_instalar() {
+    echo "__________________________________________"
+
+    if ! rpm -q bind &>/dev/null; then
+        echo "Instalando BIND en Fedora..."
+        sudo dnf install -y bind bind-utils &>/dev/null
+        sudo systemctl enable named &>/dev/null
+    else
+        echo -e "${YELLOW}BIND ya instalado.${NC}"
+    fi
+
+    echo "Configurando named para aceptar consultas externas..."
+
+    sudo sed -i 's/listen-on port 53 { 127.0.0.1; };/listen-on port 53 { any; };/' "$CONF"
+    sudo sed -i 's/allow-query.*;/allow-query { any; };/' "$CONF"
+
+    # Abrir DNS en firewall de Fedora
+    if systemctl is-active firewalld &>/dev/null; then
+        sudo firewall-cmd --permanent --add-service=dns &>/dev/null
+        sudo firewall-cmd --reload &>/dev/null
+    fi
+
+    sudo systemctl restart named
+
+    if systemctl is-active named &>/dev/null; then
+        echo -e "${GREEN}DNS listo en Fedora Server.${NC}"
+    else
+        echo -e "${RED}named no pudo iniciar → journalctl -xe${NC}"
+    fi
+
+    read -p "Enter para continuar..."
+}
+
+# =========================================
+# AGREGAR DOMINIO
+# =========================================
+opcion_agregar() {
+    echo "+++++++++++++++++++++++++++++++++++++"
+    echo "        AGREGAR DOMINIO DNS"
+    echo "+++++++++++++++++++++++++++++++++++++"
+
+    read -p "Dominio (ej: empresa.local): " ZONA
+    [[ -z "$ZONA" ]] && return
+
+    while true; do
+        read -p "IP del servidor: " IP_CLIENTE
+        validar_ip "$IP_CLIENTE" && break
+        echo -e "${RED}IP invalida${NC}"
+    done
+
+    ARCHIVO_ZONA="$ZONE_DIR/${ZONA}.zone"
     SERIAL=$(date +%Y%m%d01)
 
-    echo "Creando zona DNS automatica..."
+    if grep -q "zone \"$ZONA\"" "$CONF"; then
+        echo -e "${YELLOW}El dominio ya existe${NC}"
+        return
+    fi
 
-cat > "$RUTA_ZONA" <<EOF
-\$TTL 86400
-@   IN  SOA ns.$DOMINIO. root.$DOMINIO. (
-        $SERIAL
-        3600
-        1800
-        604800
-        86400 )
+    sudo tee -a "$CONF" > /dev/null <<EOF
 
-@       IN  NS  ns.$DOMINIO.
-ns      IN  A   $IP_CLIENTE
-
-; REGISTROS OBLIGATORIOS AUTOMATICOS
-@       IN  A   $IP_CLIENTE
-www     IN  A   $IP_CLIENTE
-EOF
-
-
-chown named:named "$RUTA_ZONA"
-chmod 640 "$RUTA_ZONA"
-restorecon "$RUTA_ZONA" 2>/dev/null
-
-
-    echo "Registrando zona en named.conf..."
-
-cat >> $CONFIG_LOCAL <<EOF
-
-zone "$DOMINIO" IN {
+zone "$ZONA" IN {
     type master;
-    file "$ARCHIVO_ZONA";
+    file "${ZONA}.zone";
+    allow-update { none; };
 };
 EOF
 
-    echo "Validando configuracion..."
+    sudo tee "$ARCHIVO_ZONA" > /dev/null <<EOF
+\$TTL 86400
+@   IN  SOA ns1.$ZONA. admin.$ZONA. (
+            $SERIAL
+            3600
+            1800
+            604800
+            86400 )
+@       IN  NS      ns1.$ZONA.
+ns1     IN  A       $IP_CLIENTE
+@       IN  A       $IP_CLIENTE
+www     IN  A       $IP_CLIENTE
+EOF
 
-    named-checkconf || { echo "Error en named.conf"; return; }
-    named-checkzone $DOMINIO $RUTA_ZONA || { echo "Error en archivo de zona"; return; }
+    # Permisos Fedora + SELinux
+    sudo chown root:named "$ARCHIVO_ZONA"
+    sudo chmod 640 "$ARCHIVO_ZONA"
+    sudo restorecon -v "$ARCHIVO_ZONA" &>/dev/null
 
-    systemctl restart named
+    sudo named-checkconf || { echo "Error en named.conf"; return; }
+    sudo named-checkzone "$ZONA" "$ARCHIVO_ZONA" || { echo "Error en zona"; return; }
 
-    echo "Dominio $DOMINIO creado correctamente"
-    echo "Registros creados automaticamente:"
-    echo " - $DOMINIO"
-    echo " - www.$DOMINIO"
-}
-# =========================================
-# BAJA DE DOMINIO
-# =========================================
+    sudo systemctl restart named
+    echo -e "${GREEN}Dominio agregado correctamente${NC}"
 
-baja_dominio() {
-
-    echo "=== BAJA DE DOMINIO ==="
-    read -p "Dominio a eliminar: " DOMINIO
-      if ! grep -q "zone \"$DOMINIO\"" $CONFIG_LOCAL; then
-        echo "El dominio no existe"
-      return
-      fi
-
-
-    ARCHIVO_ZONA="db.$DOMINIO"
-    RUTA_ZONA="$ZONA_DIR/$ARCHIVO_ZONA"
-
-    sed -i "/zone \"$DOMINIO\"/,/};/d" $CONFIG_LOCAL
-    rm -f $RUTA_ZONA
-
-    systemctl restart named
-
-    echo "Dominio eliminado"
+    read -p "Enter para continuar..."
 }
 
 # =========================================
-# CONSULTAR DOMINIOS
+# VER DOMINIOS
 # =========================================
-
-consultar_dominios() {
-
-    echo ""
-    echo "==============================="
-    echo "   DOMINIOS CONFIGURADOS DNS"
-    echo "==============================="
-    printf "%-25s %-15s\n" "DOMINIO" "IP"
-    printf "%-25s %-15s\n" "-------------------------" "---------------"
-
-    # Extrae solo dominios válidos
-   DOMS=$(grep 'type master' -B1 $CONFIG_LOCAL | grep 'zone "' | cut -d '"' -f2)
-
-
-    if [ -z "$DOMS" ]; then
-        echo "No hay dominios configurados"
-        return
-    fi
-
-    for d in $DOMS; do
-
-        ZONA_FILE="$ZONA_DIR/db.$d"
-
-        if [ ! -f "$ZONA_FILE" ]; then
-            printf "%-25s %-15s\n" "$d" "Zona no encontrada"
-            continue
-        fi
-
-        # Extraer IP del registro A principal
-        IP=$(awk '$1=="@" && $3=="A" {print $4}' "$ZONA_FILE")
-
-        if [ -z "$IP" ]; then
-            IP=$(awk '$1=="ns" && $3=="A" {print $4}' "$ZONA_FILE")
-        fi
-
-        printf "%-25s %-15s\n" "$d" "$IP"
-    done
-
-    echo ""
-}
-
-
-# =========================================
-# PROBAR DNS
-# =========================================
-
-probar_dns() {
-
-    read -p "Dominio a probar (ingresa sin wwww): " DOMINIO
-    nslookup $DOMINIO
-    nslookup www.$DOMINIO
+opcion_ver() {
+    echo "Dominios configurados:"
+    grep 'zone "' "$CONF" | awk '{print $2}' | tr -d '"' | grep -v '^\.$\|^0\.\|^1\.\|^2\.'
+    read -p "Enter para continuar..."
 }
 
 # =========================================
-# VERIFICAR SERVICIO
+# MENU
 # =========================================
+while true; do
+    echo -e "\n++++++++ DNS FEDORA SERVER ++++++++"
+    echo "1) Verificar instalacion"
+    echo "2) Instalar DNS"
+    echo "3) Agregar dominio"
+    echo "4) Eliminar dominio"
+    echo "5) Ver dominios"
+    echo "6) Salir"
+    read -p "Opcion: " OPT
 
-verificar_servicio() {
-
-    echo "=== ESTADO DNS ==="
-
-    if systemctl list-unit-files | grep -q named; then
-        echo "Servicio instalado"
-    else
-        echo "Servicio NO instalado"
-        return
-    fi
-
-    systemctl status named --no-pager
-}
-
-# =========================================
-# MENU PRINCIPAL
-# =========================================
-
-menu() {
-
-    while true; do
-        echo ""
-        echo "===== DNS FEDORA SERVER ====="
-        echo "1. Instalar DNS"
-        echo "2. Alta de dominio"
-        echo "3. Baja de dominio"
-        echo "4. Consultar dominios"
-        echo "5. Probar resolucion"
-        echo "6. Verificar servicio"
-        echo "7. Salir"
-
-        read -p "Seleccione: " op
-
-        case $op in
-            1)
-                instalar_dns
-                tiene_ip_fija || configurar_ip_fija
-                ;;
-            2) alta_dominio ;;
-            3) baja_dominio ;;
-            4) consultar_dominios ;;
-            5) probar_dns ;;
-            6) verificar_servicio ;;
-            7) exit ;;
-            *) echo "Opcion invalida" ;;
-        esac
-    done
-}
-
-menu
+  case $OPT in
+    1) opcion_verificar ;;
+    2) opcion_instalar ;;
+    3) opcion_agregar ;;
+    4) opcion_borrar ;;
+    5) opcion_ver ;;
+    6) exit ;;
+    *) echo "Opcion invalida" ;;
+	esac
+done
