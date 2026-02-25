@@ -1,35 +1,38 @@
 # =========================================
-# IMPORTAR MODULOS DE LA PRACTICA
+# IMPORTAR LIBRERIAS
 # =========================================
 
 . "$PSScriptRoot\core_utils.ps1"
-. "$PSScriptRoot\dhcp_functions.ps1"
+. "$PSScriptRoot\dns_functions.ps1"
 
 # =========================================
 # MENU PRINCIPAL
 # =========================================
 
-function Menu-DHCP {
+while ($true) {
 
-    do {
-        Write-Host ""
-        Write-Host "===== PRACTICA DHCP WINDOWS SERVER 2022 ====="
-        Write-Host "1. Instalar servicio DHCP"
-        Write-Host "2. Configurar DHCP"
-        Write-Host "3. Monitorear DHCP"
-        Write-Host "4. Ver estado del servicio"
-        Write-Host "5. Salir"
+    Clear-Host
+    Write-Host ""
+    Write-Host "++++++++++++++++++++++++++++++++++"
+    Write-Host "         SISTEMA DNS - WINDOWS"
+    Write-Host "++++++++++++++++++++++++++++++++++"
+    Write-Host "1) Verificar instalacion DNS"
+    Write-Host "2) Instalar DNS"
+    Write-Host "3) Agregar dominio"
+    Write-Host "4) Borrar dominio"
+    Write-Host "5) Ver dominios"
+    Write-Host "6) Salir"
+    Write-Host "__________________________________________"
 
-        $op = Read-Host "Seleccione opcion"
+    $OPT = Read-Host "Selecciona una opcion"
 
-        switch ($op) {
-            "1" { Instalar-DHCP }
-            "2" { Configurar-DHCP }
-            "3" { Monitoreo-DHCP }
-            "4" { Verificar-EstadoServicio }
-        }
-
-    } while ($op -ne "5")
+    switch ($OPT) {
+        "1" { Opcion-Verificar }
+        "2" { Opcion-Instalar }
+        "3" { Opcion-Agregar }
+        "4" { Opcion-Borrar }
+        "5" { Opcion-Ver }
+        "6" { exit }
+        default { Write-Color "Opcion invalida." Red }
+    }
 }
-
-Menu-DHCP
