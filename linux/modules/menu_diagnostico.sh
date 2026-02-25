@@ -12,15 +12,15 @@ menu_diagnostico() {
 
     echo ""
     echo "=== NOMBRE DEL EQUIPO ==="
-    obtener_hostname
+    get_hostname
 
     echo ""
     echo "=== DIRECCION IPv4 ==="
-    obtener_ipv4
+    get_ipv4
 
     echo ""
     echo "=== USO DE DISCO ==="
-    obtener_uso_disco
+    get_disk_root
 
     echo ""
     echo "Diagnostico completado"
