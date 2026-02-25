@@ -1,38 +1,33 @@
-# =========================================
-# IMPORTAR LIBRERIAS
-# =========================================
+# =====================================================
+# MENU PRINCIPAL SSH - PRACTICA 4
+# =====================================================
 
-. "$PSScriptRoot\core_utils.ps1"
-. "$PSScriptRoot\dns_functions.ps1"
+. .\ssh_functions.ps1
 
-# =========================================
-# MENU PRINCIPAL
-# =========================================
-
-while ($true) {
-
+do {
     Clear-Host
+    Write-Section "ADMINISTRACION SSH"
+
+    Write-Host "1) Instalar y configurar SSH completo"
+    Write-Host "2) Instalar servicio OpenSSH"
+    Write-Host "3) Configurar servicio SSH"
+    Write-Host "4) Configurar firewall SSH"
+    Write-Host "5) Ver estado del servicio"
+    Write-Host "0) Salir"
     Write-Host ""
-    Write-Host "++++++++++++++++++++++++++++++++++"
-    Write-Host "         SISTEMA DNS - WINDOWS"
-    Write-Host "++++++++++++++++++++++++++++++++++"
-    Write-Host "1) Verificar instalacion DNS"
-    Write-Host "2) Instalar DNS"
-    Write-Host "3) Agregar dominio"
-    Write-Host "4) Borrar dominio"
-    Write-Host "5) Ver dominios"
-    Write-Host "6) Salir"
-    Write-Host "__________________________________________"
 
-    $OPT = Read-Host "Selecciona una opcion"
+    $opcion = Read-Host "Seleccione una opcion"
 
-    switch ($OPT) {
-        "1" { Opcion-Verificar }
-        "2" { Opcion-Instalar }
-        "3" { Opcion-Agregar }
-        "4" { Opcion-Borrar }
-        "5" { Opcion-Ver }
-        "6" { exit }
-        default { Write-Color "Opcion invalida." Red }
+    switch ($opcion) {
+        "1" { Install-SSHFull }
+        "2" { Install-SSHService }
+        "3" { Configure-SSHService }
+        "4" { Configure-SSHFirewall }
+        "5" { Get-SSHStatus }
     }
-}
+
+    if ($opcion -ne "0") {
+        Pause
+    }
+
+} while ($opcion -ne "0")
