@@ -1,31 +1,25 @@
-# =====================================================
-# MENU SSH - FEDORA SERVER
-# =====================================================
+function Show-SSHMenu {
+    do {
+        Clear-Host
+        Write-Host "================================="
+        Write-Host " PRACTICA 4 - SSH WINDOWS SERVER"
+        Write-Host "================================="
+        Write-Host "1) Instalar OpenSSH Server"
+        Write-Host "2) Configuracion automatica completa"
+        Write-Host "3) Verificar servicio"
+        Write-Host "4) Mostrar datos de conexion"
+        Write-Host "0) Volver al menu principal"
+        Write-Host ""
 
-menu_ssh() {
-    while true; do
-        clear
-        echo "================================="
-        echo " PRACTICA 4 - SERVICIO SSH"
-        echo "================================="
-        echo "1) Instalar OpenSSH Server"
-        echo "2) Configuracion automatica completa"
-        echo "3) Verificar servicio"
-        echo "4) Mostrar datos de conexion"
-        echo "0) Volver al menu principal"
-        echo ""
+        $op = Read-Host "Seleccione opcion"
 
-        read -p "Seleccione opcion: " op
+        switch ($op) {
+            "1" { Install-SSHService }
+            "2" { Configure-SSHService }
+            "3" { Get-SSHStatus }
+            "4" { Show-SSHConnectionInfo }
+        }
 
-        case $op in
-            1) ssh_instalar ;;
-            2) ssh_configurar ;;
-            3) ssh_verificar ;;
-            4) ssh_mostrar_conexion ;;
-            0) break ;;
-            *) echo "Opcion invalida" ;;
-        esac
-
-        read -p "Enter para continuar..."
-    done
+        Pause
+    } while ($op -ne "0")
 }
