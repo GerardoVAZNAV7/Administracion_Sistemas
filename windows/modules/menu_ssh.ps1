@@ -4,6 +4,7 @@
 
 . .\ssh_functions.ps1
 
+Menu-SSH {
 do {
     Clear-Host
     Write-Section "ADMINISTRACION SSH"
@@ -31,3 +32,4 @@ do {
     }
 
 } while ($opcion -ne "0")
+}

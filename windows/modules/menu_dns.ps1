@@ -8,6 +8,7 @@
 # =========================================
 # MENU PRINCIPAL
 # =========================================
+Menu-DNS {
 
 while ($true) {
 
@@ -35,4 +36,5 @@ while ($true) {
         "6" { exit }
         default { Write-Color "Opcion invalida." Red }
     }
+}
 }
