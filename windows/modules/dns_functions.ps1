@@ -179,36 +179,44 @@ function Opcion-FijarResolucionLocal {
 # =========================================
 # RECONFIGURAR RESOLUCIÓN (FORZADO A ETHERNET)
 # =========================================
+# =========================================
+# RECONFIGURAR RESOLUCIÓN (IP SERVIDOR SOLAMENTE)
+# =========================================
 function Opcion-ReconfigurarDNS {
     Write-Host "__________________________________________"
     Write-Host "REPARANDO CONFIGURACION DNS..." -ForegroundColor Cyan
     
-    # 1. Intentar obtener la interfaz llamada exactamente "Ethernet"
+    # 1. Forzar la búsqueda en la interfaz "Ethernet"
     $InterfaceName = "Ethernet"
     $TargetNet = Get-NetAdapter | Where-Object { $_.Name -eq $InterfaceName }
 
-    # Validación por si el nombre es distinto (ej. "Ethernet 0")
+    # Si no se llama exactamente "Ethernet", buscamos la que esté activa
     if ($null -eq $TargetNet) {
-        Write-Host "No se encontro '$InterfaceName', buscando la interfaz principal..." -ForegroundColor Yellow
         $TargetNet = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
     }
 
     $RealName = $TargetNet.Name
+    # Obtenemos la IP real del servidor (ej. 10.10.10.10)
     $MiIP = (Get-NetIPAddress -InterfaceAlias $RealName -AddressFamily IPv4).IPAddress
     
-    Write-Host "Anclando DNS a interfaz: $RealName ($MiIP)"
+    Write-Host "Anclando DNS a IP del Servidor: $MiIP en interfaz $RealName"
     
-    # 2. Aplicar DNS local (Loopback primero, luego IP propia)
-    # Esto evita que Windows salte al DNS del router (172.16.1.1)
-    Set-DnsClientServerAddress -InterfaceAlias $RealName -ServerAddresses ("127.0.0.1", $MiIP)
+    # 2. Aplicar SOLO la IP del servidor. 
+    # Quitamos el 127.0.0.1 para que nslookup no muestre 'localhost'
+    Set-DnsClientServerAddress -InterfaceAlias $RealName -ServerAddresses ($MiIP)
 
-    # 3. Reiniciar servicio y limpiar residuos
+    # 3. Reiniciar y limpiar
     Write-Host "Reiniciando servicio DNS Server..."
     Restart-Service "DNS" -Force
 
-    Write-Host "Limpiando cache de resolucion de Windows..."
+    Write-Host "Limpiando cache de resolucion..."
     Clear-DnsClientCache
     
-    Write-Color "Cambios aplicados exitosamente en $RealName." Green
-    Read-Host "Presiona Enter para continuar..."
+    Write-Color "Cambios aplicados. Ahora nslookup usara: $MiIP" Green
+    
+    # Prueba automática para confirmar
+    Write-Host "`nPrueba de resolucion:" -ForegroundColor Gray
+    nslookup gera.com
+    
+    Read-Host "`nPresiona Enter para continuar..."
 }
