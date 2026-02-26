@@ -18,7 +18,7 @@ asegurar_permisos_dns() {
     mkdir -p "$ZONE_DIR"
 
     chown root:named "$ZONE_DIR"
-    chmod 750 "$ZONE_DIR"
+    chmod 770 "$ZONE_DIR"
 
     # Contexto SELinux correcto para zonas
     restorecon -Rv "$ZONE_DIR" &>/dev/null
