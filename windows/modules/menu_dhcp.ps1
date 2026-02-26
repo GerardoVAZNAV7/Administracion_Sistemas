@@ -31,5 +31,3 @@ function Menu-DHCP {
 
     } while ($op -ne "5")
 }
-
-Menu-DHCP
