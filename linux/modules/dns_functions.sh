@@ -230,28 +230,35 @@ listar_dominios_dns() {
 # =====================================================
 fijar_resolucion_local() {
     verificar_root
-    print_section "FORZANDO RESOLUCION LOCAL (enp0s3)"
+    print_section "FORZANDO RESOLUCION CON IP DHCP (enp0s3)"
 
-    # Extraer la IP de la interfaz enp0s3
-    IP_DNS=$(nmcli -g IP4.ADDRESS device show enp0s3 | cut -d/ -f1)
+    # Extraer específicamente la IP que viene de DHCP (la que no es estática)
+    # Buscamos la línea que NO tiene el flag 'forever' (las dinámicas tienen tiempo de vida)
+    IP_DHCP=$(ip -4 addr show enp0s3 | grep "dynamic" | awk '{print $2}' | cut -d/ -f1 | head -n1)
 
-    if [[ -z "$IP_DNS" ]]; then
-        print_warn "No se detectó IP en enp0s3. Usando 127.0.0.1"
-        IP_DNS="127.0.0.1"
+    # Si falla la detección dinámica, usamos la IP principal de la interfaz
+    if [[ -z "$IP_DHCP" ]]; then
+        IP_DHCP=$(nmcli -g IP4.ADDRESS device show enp0s3 | cut -d/ -f1 | head -n1)
     fi
 
-    # Quitar candado para editar
-    chattr -i /etc/resolv.conf 2>/dev/null
+    print_info "IP DHCP Detectada: $IP_DHCP"
 
-    # Crear resolv.conf que apunte a tu propio servidor
+    # 1. Configurar NetworkManager para que no sobrescriba el DNS
+    nmcli connection modify "enp0s3" ipv4.ignore-auto-dns yes
+    nmcli connection up "enp0s3" &>/dev/null
+
+    # 2. Quitar candado y forzar resolv.conf
+    chattr -i /etc/resolv.conf 2>/dev/null
     cat > /etc/resolv.conf <<EOF
-# Generado por Script de Administracion
-nameserver $IP_DNS
-nameserver 127.0.0.1
+# Forzado a IP DHCP del servidor
+nameserver $IP_DHCP
 options timeout:1 attempts:1
 EOF
-
-    # Poner candado para que NetworkManager no lo borre (vital en Fedora)
+    
+    # 3. Bloquear el archivo para que nada lo cambie
     chattr +i /etc/resolv.conf
-    print_ok "Sistema configurado para resolver con: $IP_DNS"
+    print_ok "DNS configurado hacia la IP: $IP_DHCP"
+    
+    # Llamar a la reparación del "UnKnown" automáticamente
+    reparar_server_unknown_linux "$IP_DHCP"
 }
