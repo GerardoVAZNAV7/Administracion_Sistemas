@@ -79,7 +79,9 @@ instalar_dns() {
     asegurar_permisos_dns
     habilitar_servicio "named"
     reiniciar_servicio "named"
-
+   # ---  ---
+    fijar_resolucion_local 
+    # -------------------------------
     servicio_activo "named" && print_ok "Servidor DNS listo" || print_error "named no pudo iniciar"
 }
 
@@ -221,4 +223,35 @@ eliminar_dominio_dns() {
 listar_dominios_dns() {
     print_section "DOMINIOS CONFIGURADOS"
     grep 'zone "' "$CONF" | awk '{print $2}' | tr -d '"' | grep -v '^\.$\|^0\.\|^1\.\|^2\.'
+}
+
+# =====================================================
+# FORZAR RESOLUCION LOCAL USANDO IP DE ENP0S3
+# =====================================================
+fijar_resolucion_local() {
+    verificar_root
+    print_section "FORZANDO RESOLUCION LOCAL (enp0s3)"
+
+    # Extraer la IP de la interfaz enp0s3
+    IP_DNS=$(nmcli -g IP4.ADDRESS device show enp0s3 | cut -d/ -f1)
+
+    if [[ -z "$IP_DNS" ]]; then
+        print_warn "No se detectó IP en enp0s3. Usando 127.0.0.1"
+        IP_DNS="127.0.0.1"
+    fi
+
+    # Quitar candado para editar
+    chattr -i /etc/resolv.conf 2>/dev/null
+
+    # Crear resolv.conf que apunte a tu propio servidor
+    cat > /etc/resolv.conf <<EOF
+# Generado por Script de Administracion
+nameserver $IP_DNS
+nameserver 127.0.0.1
+options timeout:1 attempts:1
+EOF
+
+    # Poner candado para que NetworkManager no lo borre (vital en Fedora)
+    chattr +i /etc/resolv.conf
+    print_ok "Sistema configurado para resolver con: $IP_DNS"
 }
