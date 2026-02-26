@@ -172,3 +172,29 @@ function Opcion-FijarResolucionLocal {
     Write-Color "Configuracion exitosa: El servidor ahora se consulta a si mismo ($MiIP)." Green
     Read-Host "Enter para continuar..."
 }
+
+# =========================================
+# RECONFIGURAR Y REPARAR RESOLUCIÓN DNS
+# =========================================
+function Opcion-ReconfigurarDNS {
+    Write-Host "__________________________________________"
+    Write-Host "REPARANDO CONFIGURACION DNS..." -ForegroundColor Cyan
+    
+    # 1. Forzar la IP local en la interfaz Ethernet activa
+    $Interface = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1 -ExpandProperty Name
+    $MiIP = (Get-NetIPAddress -InterfaceAlias $Interface -AddressFamily IPv4).IPAddress
+    
+    Write-Host "Anclando DNS a interfaz: $Interface ($MiIP)"
+    Set-DnsClientServerAddress -InterfaceAlias $Interface -ServerAddresses ("127.0.0.1", $MiIP)
+
+    # 2. Reiniciar el servicio para aplicar cambios en las zonas
+    Write-Host "Reiniciando servicio DNS Server..."
+    Restart-Service "DNS" -Force
+
+    # 3. Limpiar caché de resolución de Windows para evitar datos viejos
+    Write-Host "Limpiando cache de resolucion local..."
+    Clear-DnsClientCache
+    
+    Write-Color "Cambios aplicados. Ahora el servidor prioriza su propia tabla." Green
+    Read-Host "Presiona Enter para continuar..."
+}
