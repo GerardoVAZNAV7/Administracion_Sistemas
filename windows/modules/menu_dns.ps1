@@ -1,15 +1,9 @@
-# =========================================
-# MENU PRINCIPAL DNS
-# SOLO DEFINE FUNCION
-# =========================================
-
 . "$PSScriptRoot\core_utils.ps1"
 . "$PSScriptRoot\dns_functions.ps1"
 
 function Menu-DNS {
 
-    while ($true) {
-
+    do {
         Clear-Host
         Write-Host ""
         Write-Host "++++++++++++++++++++++++++++++++++"
@@ -31,11 +25,13 @@ function Menu-DNS {
             "3" { Opcion-Agregar }
             "4" { Opcion-Borrar }
             "5" { Opcion-Ver }
-            "0" { break }
             default {
-                Write-Color "Opcion invalida." Red
-                Pause
+                if ($OPT -ne "0") {
+                    Write-Color "Opcion invalida." Red
+                    Pause
+                }
             }
         }
-    }
+
+    } while ($OPT -ne "0")
 }

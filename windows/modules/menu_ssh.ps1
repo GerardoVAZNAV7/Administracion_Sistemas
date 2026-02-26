@@ -1,8 +1,3 @@
-# =====================================================
-# MENU PRINCIPAL SSH - PRACTICA 4
-# SOLO DEFINE FUNCION (NO EJECUTA NADA)
-# =====================================================
-
 . "$PSScriptRoot\ssh_functions.ps1"
 
 function Menu-SSH {
@@ -27,13 +22,11 @@ function Menu-SSH {
             "3" { Configure-SSHService }
             "4" { Configure-SSHFirewall }
             "5" { Get-SSHStatus }
-            "0" { break }
-            default { Write-Color "Opcion invalida" Red }
         }
 
         if ($opcion -ne "0") {
             Pause
         }
 
-    } while ($true)
+    } while ($opcion -ne "0")
 }
