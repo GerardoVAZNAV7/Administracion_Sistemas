@@ -1,4 +1,4 @@
-function Show-SSHMenu {
+function Menu-ssh {
     do {
         Clear-Host
         Write-Host "================================="
