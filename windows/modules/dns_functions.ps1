@@ -35,7 +35,7 @@ function Opcion-Instalar {
         Write-Host "Instalando DNS, espera..."
         Install-WindowsFeatureSafe "DNS"
         Start-ServiceSafe "DNS"
-
+        Opcion-FijarResolucionLocal
         Write-Color "Instalacion y configuracion completadas." Green
     }
     else {
@@ -149,4 +149,26 @@ function Opcion-Ver {
     Select-Object ZoneName
 
     Read-Host "Presiona Enter para continuar..."
+}
+
+# =========================================
+# FIJAR RESOLUCION LOCAL (NUEVA FUNCIÓN)
+# =========================================
+
+function Opcion-FijarResolucionLocal {
+    Write-Host "__________________________________________"
+    Write-Host "Configurando adaptador Ethernet para DNS Local..." -ForegroundColor Cyan
+    
+    # 1. Obtener la interfaz que está activa (Ethernet)
+    $Interface = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1 -ExpandProperty Name
+    
+    # 2. Obtener la IP propia de esa interfaz
+    $MiIP = (Get-NetIPAddress -InterfaceAlias $Interface -AddressFamily IPv4).IPAddress
+    
+    # 3. Forzar al adaptador a usar el Loopback y su propia IP. 
+    # Esto elimina servidores externos como el 172.16.1.1 de la tarjeta.
+    Set-DnsClientServerAddress -InterfaceAlias $Interface -ServerAddresses ("127.0.0.1", $MiIP)
+    
+    Write-Color "Configuracion exitosa: El servidor ahora se consulta a si mismo ($MiIP)." Green
+    Read-Host "Enter para continuar..."
 }
