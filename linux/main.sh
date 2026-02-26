@@ -46,7 +46,7 @@ menu_principal() {
             1) menu_diagnostico ;;
             2) Menu-DHCP ;;
             3) Menu-DNS ;;
-            4) Menu-ssh ;;
+            4) menu_ssh ;;
             0) exit 0 ;;
             *) echo "Opcion invalida" ;;
         esac

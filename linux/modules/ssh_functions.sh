@@ -1,115 +1,94 @@
+#!/bin/bash
 # =====================================================
-# SSH FUNCTIONS - WINDOWS SERVER 2022
-# Requiere: . .\core_utils.ps1
+# SSH FUNCTIONS - FEDORA SERVER
+# Requiere: core_utils.sh
 # =====================================================
 
 # =====================================================
 # INSTALAR OPENSSH SERVER
 # =====================================================
 
-function Install-SSHService {
-    Write-Section "INSTALANDO OPENSSH SERVER"
+instalar_ssh() {
+    verificar_root
+    print_section "INSTALANDO OPENSSH SERVER"
 
-    if (-not (Test-Admin)) {
-        Write-Color "Ejecute PowerShell como Administrador" Red
+    if paquete_instalado "openssh-server"; then
+        print_warn "OpenSSH ya esta instalado"
         return
-    }
+    fi
 
-    $cap = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
-
-    if ($cap.State -eq "Installed") {
-        Write-Color "OpenSSH ya esta instalado" Yellow
-        return
-    }
-
-    Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
-    Write-Color "OpenSSH instalado correctamente" Green
+    instalar_paquete "openssh-server"
+    print_ok "OpenSSH instalado correctamente"
 }
 
 # =====================================================
 # CONFIGURACION COMPLETA AUTOMATICA
 # =====================================================
 
-function Configure-SSHService {
-    Write-Section "CONFIGURACION AUTOMATICA SSH"
+configurar_ssh() {
+    verificar_root
+    print_section "CONFIGURACION AUTOMATICA SSH"
 
-    if (-not (Test-Admin)) {
-        Write-Color "Ejecute PowerShell como Administrador" Red
-        return
-    }
-
-    # Iniciar servicio
-    Start-Service sshd
-
-    # Inicio automatico en boot
-    Set-Service -Name sshd -StartupType Automatic
+    habilitar_servicio "sshd"
+    reiniciar_servicio "sshd"
 
     # Configurar firewall
-    if (-not (Get-NetFirewallRule -Name "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue)) {
-        New-NetFirewallRule `
-            -Name "OpenSSH-Server-In-TCP" `
-            -DisplayName "OpenSSH Server" `
-            -Enabled True `
-            -Direction Inbound `
-            -Protocol TCP `
-            -Action Allow `
-            -LocalPort 22
-    }
+    firewall-cmd --permanent --add-service=ssh >/dev/null 2>&1
+    firewall-cmd --reload >/dev/null 2>&1
 
-    Write-Color "SSH configurado y listo para acceso remoto" Green
+    print_ok "SSH configurado y listo para acceso remoto"
 }
 
 # =====================================================
 # VERIFICAR SERVICIO
 # =====================================================
 
-function Get-SSHStatus {
-    Write-Section "ESTADO DEL SERVICIO SSH"
+verificar_ssh() {
+    print_section "ESTADO DEL SERVICIO SSH"
 
-    $service = Get-Service -Name sshd -ErrorAction SilentlyContinue
-
-    if (-not $service) {
-        Write-Color "OpenSSH no instalado" Red
+    paquete_instalado "openssh-server" && print_ok "Paquete instalado" || {
+        print_error "OpenSSH no instalado"
         return
     }
 
-    Write-Color "Servicio: $($service.Status)" Yellow
+    servicio_activo "sshd" && print_ok "Servicio en ejecucion" || print_warn "Servicio detenido"
 
-    $rule = Get-NetFirewallRule -DisplayName "OpenSSH Server" -ErrorAction SilentlyContinue
-
-    if ($rule) {
-        Write-Color "Firewall: Puerto 22 permitido" Green
-    } else {
-        Write-Color "Firewall: Puerto 22 NO configurado" Red
-    }
-
-    Write-Host ""
-    Write-Host "Puerto escuchando:"
-    netstat -an | findstr :22
+    echo ""
+    print_section "PUERTO 22 ESCUCHANDO"
+    ss -tlnp | grep :22
 }
 
 # =====================================================
 # MOSTRAR DATOS DE CONEXION
 # =====================================================
 
-function Show-SSHConnectionInfo {
-    Write-Section "DATOS DE CONEXION"
+mostrar_datos_conexion() {
+    print_section "DATOS DE CONEXION SSH"
 
-    $ip = (Get-NetIPAddress -AddressFamily IPv4 |
-           Where-Object {$_.IPAddress -notlike "169.*"} |
-           Select-Object -First 1).IPAddress
+    IP=$(hostname -I | awk '{print $1}')
+    USUARIO=$(whoami)
 
-    Write-Host ""
-    Write-Host "IP del servidor: $ip"
-    Write-Host "Puerto: 22"
-    Write-Host "Usuario Windows: $env:USERNAME"
-    Write-Host ""
+    echo ""
+    echo "IP del servidor: $IP"
+    echo "Puerto: 22"
+    echo "Usuario Linux: $USUARIO"
+    echo ""
 
-    Write-Host "Desde PuTTY:"
-    Write-Host "Host Name: $ip"
-    Write-Host "Port: 22"
-    Write-Host ""
+    echo "==== CONEXION DESDE TU PC ===="
+    echo "PuTTY:"
+    echo "Host Name: $IP"
+    echo "Port: 22"
+    echo ""
 
-    Write-Host "Transferir archivo desde tu PC:"
-    Write-Host "scp archivo.txt usuario@$ip:C:\Users\usuario\Desktop\"
+    echo "Terminal Windows:"
+    echo "ssh $USUARIO@$IP"
+    echo ""
+
+    echo "==== TRANSFERENCIA DE ARCHIVOS ===="
+    echo "Enviar archivo desde tu PC al servidor:"
+    echo "scp archivo.txt $USUARIO@$IP:/home/$USUARIO/"
+    echo ""
+
+    echo "Descargar archivo del servidor a tu PC:"
+    echo "scp $USUARIO@$IP:/home/$USUARIO/archivo.txt ."
 }
