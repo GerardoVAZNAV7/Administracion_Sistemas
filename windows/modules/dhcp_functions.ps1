@@ -100,15 +100,15 @@ function Configurar-DHCP {
     $scope = Read-Host "Nombre del ambito"
 
     do { $ipServidor = Read-Host "IP del servidor DHCP" }
-    until (Validar-IP $ipServidor)
+    until (Test-IPv4 $ipServidor)
 
     do { $ipFinal = Read-Host "IP final del pool" }
-    until (Validar-IP $ipFinal)
+    until (Test-IPv4 $ipFinal)
 
-    $poolInicio = Siguiente-IP $ipServidor
-    $mask = Calcular-Mascara24
+    $poolInicio = Get-NextIP $ipServidor
+    $mask = Get-SubnetMask24
 
-    Configurar-IPServidor $ipServidor
+    Set-StaticIP $ipServidor
     Forzar-InterfazDHCP
 
     $scopeObj = Add-DhcpServerv4Scope `
@@ -119,15 +119,11 @@ function Configurar-DHCP {
         -State Active `
         -PassThru
 
-    # ===============================
-    # OPCIONES ENTREGADAS AL CLIENTE
-    # ===============================
-
     do { $gateway = Read-Host "Gateway" }
-    until (Validar-IP $gateway)
+    until (Test-IPv4 $gateway)
 
     do { $dns = Read-Host "Servidor DNS" }
-    until (Validar-IP $dns)
+    until (Test-IPv4 $dns)
 
     $dominio = Read-Host "Nombre de dominio (opcional)"
 
