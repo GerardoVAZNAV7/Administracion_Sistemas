@@ -232,33 +232,39 @@ fijar_resolucion_local() {
     verificar_root
     print_section "FORZANDO RESOLUCION CON IP DHCP (enp0s3)"
 
-    # Extraer específicamente la IP que viene de DHCP (la que no es estática)
-    # Buscamos la línea que NO tiene el flag 'forever' (las dinámicas tienen tiempo de vida)
+    # 1. Limpieza de variables previas para asegurar que no se use la IP fija
+    local IP_DHCP=""
+    
+    # 2. Extraer específicamente la IP con flag 'dynamic'
+    # Esto ignora la IP estática que pueda tener la misma interfaz
     IP_DHCP=$(ip -4 addr show enp0s3 | grep "dynamic" | awk '{print $2}' | cut -d/ -f1 | head -n1)
 
-    # Si falla la detección dinámica, usamos la IP principal de la interfaz
     if [[ -z "$IP_DHCP" ]]; then
-        IP_DHCP=$(nmcli -g IP4.ADDRESS device show enp0s3 | cut -d/ -f1 | head -n1)
+        print_error "No se detectó IP dinámica en enp0s3. Verifica tu servidor DHCP."
+        return 1
     fi
 
-    print_info "IP DHCP Detectada: $IP_DHCP"
+    print_info "IP DHCP detectada para DNS: $IP_DHCP"
 
-    # 1. Configurar NetworkManager para que no sobrescriba el DNS
-    nmcli connection modify "enp0s3" ipv4.ignore-auto-dns yes
-    nmcli connection up "enp0s3" &>/dev/null
+    # 3. Forzar a BIND (named) a escuchar específicamente en esa IP
+    # Esto evita que responda por la IP fija si ambas están activas
+    if [[ -f "$CONF" ]]; then
+        sed -i "s/listen-on port 53 { .*; };/listen-on port 53 { 127.0.0.1; $IP_DHCP; };/" "$CONF"
+    fi
 
-    # 2. Quitar candado y forzar resolv.conf
+    # 4. Configuración del sistema (resolv.conf)
     chattr -i /etc/resolv.conf 2>/dev/null
     cat > /etc/resolv.conf <<EOF
-# Forzado a IP DHCP del servidor
+# Forzado a interfaz enp0s3 (DHCP)
 nameserver $IP_DHCP
-options timeout:1 attempts:1
 EOF
-    
-    # 3. Bloquear el archivo para que nada lo cambie
     chattr +i /etc/resolv.conf
-    print_ok "DNS configurado hacia la IP: $IP_DHCP"
+
+    # 5. Reiniciar servicios para aplicar
+    reiniciar_servicio "named"
     
-    # Llamar a la reparación del "UnKnown" automáticamente
+    print_ok "DNS anclado exitosamente a la IP DHCP: $IP_DHCP"
+    
+    # Reparar el nombre del servidor para que no salga UnKnown
     reparar_server_unknown_linux "$IP_DHCP"
 }
