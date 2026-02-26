@@ -3,21 +3,24 @@
 # ORQUESTADOR PRINCIPAL - SERVIDOR FEDORA
 # =====================================================
 
+# ===== OBTENER RUTA REAL DEL SCRIPT =====
+BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # ===== CARGAR LIBRERIAS BASE =====
-source ./modules/core_utils.sh
+source "$BASE_DIR/modules/core_utils.sh"
 
 # ===== CARGAR MODULOS =====
-source ./modules/diagnostico_functions.sh
-source ./modules/menu_diagnostico.sh
+source "$BASE_DIR/modules/diagnostico_functions.sh"
+source "$BASE_DIR/modules/menu_diagnostico.sh"
 
-source ./modules/dhcp_functions.sh
-source ./modules/menu_dhcp.sh
+source "$BASE_DIR/modules/dhcp_functions.sh"
+source "$BASE_DIR/modules/menu_dhcp.sh"
 
-source ./modules/dns_functions.sh
-source ./modules/menu_dns.sh
+source "$BASE_DIR/modules/dns_functions.sh"
+source "$BASE_DIR/modules/menu_dns.sh"
 
-source ./modules/ssh_functions.sh
-source ./modules/menu_ssh.sh
+source "$BASE_DIR/modules/ssh_functions.sh"
+source "$BASE_DIR/modules/menu_ssh.sh"
 
 
 # =====================================================
