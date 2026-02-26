@@ -176,25 +176,39 @@ function Opcion-FijarResolucionLocal {
 # =========================================
 # RECONFIGURAR Y REPARAR RESOLUCIÓN DNS
 # =========================================
+# =========================================
+# RECONFIGURAR RESOLUCIÓN (FORZADO A ETHERNET)
+# =========================================
 function Opcion-ReconfigurarDNS {
     Write-Host "__________________________________________"
     Write-Host "REPARANDO CONFIGURACION DNS..." -ForegroundColor Cyan
     
-    # 1. Forzar la IP local en la interfaz Ethernet activa
-    $Interface = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1 -ExpandProperty Name
-    $MiIP = (Get-NetIPAddress -InterfaceAlias $Interface -AddressFamily IPv4).IPAddress
-    
-    Write-Host "Anclando DNS a interfaz: $Interface ($MiIP)"
-    Set-DnsClientServerAddress -InterfaceAlias $Interface -ServerAddresses ("127.0.0.1", $MiIP)
+    # 1. Intentar obtener la interfaz llamada exactamente "Ethernet"
+    $InterfaceName = "Ethernet"
+    $TargetNet = Get-NetAdapter | Where-Object { $_.Name -eq $InterfaceName }
 
-    # 2. Reiniciar el servicio para aplicar cambios en las zonas
+    # Validación por si el nombre es distinto (ej. "Ethernet 0")
+    if ($null -eq $TargetNet) {
+        Write-Host "No se encontro '$InterfaceName', buscando la interfaz principal..." -ForegroundColor Yellow
+        $TargetNet = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+    }
+
+    $RealName = $TargetNet.Name
+    $MiIP = (Get-NetIPAddress -InterfaceAlias $RealName -AddressFamily IPv4).IPAddress
+    
+    Write-Host "Anclando DNS a interfaz: $RealName ($MiIP)"
+    
+    # 2. Aplicar DNS local (Loopback primero, luego IP propia)
+    # Esto evita que Windows salte al DNS del router (172.16.1.1)
+    Set-DnsClientServerAddress -InterfaceAlias $RealName -ServerAddresses ("127.0.0.1", $MiIP)
+
+    # 3. Reiniciar servicio y limpiar residuos
     Write-Host "Reiniciando servicio DNS Server..."
     Restart-Service "DNS" -Force
 
-    # 3. Limpiar caché de resolución de Windows para evitar datos viejos
-    Write-Host "Limpiando cache de resolucion local..."
+    Write-Host "Limpiando cache de resolucion de Windows..."
     Clear-DnsClientCache
     
-    Write-Color "Cambios aplicados. Ahora el servidor prioriza su propia tabla." Green
+    Write-Color "Cambios aplicados exitosamente en $RealName." Green
     Read-Host "Presiona Enter para continuar..."
 }
