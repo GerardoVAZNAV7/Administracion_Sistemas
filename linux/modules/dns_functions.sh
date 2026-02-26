@@ -230,41 +230,46 @@ listar_dominios_dns() {
 # =====================================================
 fijar_resolucion_local() {
     verificar_root
-    print_section "FORZANDO RESOLUCION CON IP DHCP (enp0s3)"
+    print_section "FORZANDO RESOLUCION CON LA SEGUNDA IP (enp0s3)"
 
-    # 1. Limpieza de variables previas para asegurar que no se use la IP fija
-    local IP_DHCP=""
-    
-    # 2. Extraer específicamente la IP con flag 'dynamic'
-    # Esto ignora la IP estática que pueda tener la misma interfaz
-    IP_DHCP=$(ip -4 addr show enp0s3 | grep "dynamic" | awk '{print $2}' | cut -d/ -f1 | head -n1)
+    # 1. Extraer específicamente la SEGUNDA IP de la lista de enp0s3
+    # Usamos 'sed -n 2p' para agarrar exactamente la segunda línea de direcciones
+    IP_OBJETIVO=$(ip -4 addr show enp0s3 | grep "inet " | awk '{print $2}' | cut -d/ -f1 | sed -n '2p')
 
-    if [[ -z "$IP_DHCP" ]]; then
-        print_error "No se detectó IP dinámica en enp0s3. Verifica tu servidor DHCP."
-        return 1
+    if [[ -z "$IP_OBJETIVO" ]]; then
+        print_error "No se encontro una segunda IP en enp0s3. Usando la primera disponible."
+        IP_OBJETIVO=$(ip -4 addr show enp0s3 | grep "inet " | awk '{print $2}' | cut -d/ -f1 | head -n1)
     fi
 
-    print_info "IP DHCP detectada para DNS: $IP_DHCP"
+    print_info "IP Objetivo detectada: $IP_OBJETIVO"
 
-    # 3. Forzar a BIND (named) a escuchar específicamente en esa IP
-    # Esto evita que responda por la IP fija si ambas están activas
+    # 2. Corregir permisos de BIND antes de reiniciar (vital para evitar el error de tus capturas)
+    # Sin esto, named seguira diciendo 'permission denied'
+    chown -R root:named /var/named
+    chmod -R 770 /var/named
+    restorecon -Rv /var/named &>/dev/null
+
+    # 3. Forzar a BIND a escuchar en la IP detectada
     if [[ -f "$CONF" ]]; then
-        sed -i "s/listen-on port 53 { .*; };/listen-on port 53 { 127.0.0.1; $IP_DHCP; };/" "$CONF"
+        sed -i "s/listen-on port 53 { .*; };/listen-on port 53 { 127.0.0.1; $IP_OBJETIVO; };/" "$CONF"
     fi
 
-    # 4. Configuración del sistema (resolv.conf)
+    # 4. Forzar el resolv.conf
     chattr -i /etc/resolv.conf 2>/dev/null
     cat > /etc/resolv.conf <<EOF
-# Forzado a interfaz enp0s3 (DHCP)
-nameserver $IP_DHCP
+# Forzado a la segunda IP de enp0s3
+nameserver $IP_OBJETIVO
 EOF
     chattr +i /etc/resolv.conf
 
-    # 5. Reiniciar servicios para aplicar
-    reiniciar_servicio "named"
+    # 5. Reiniciar y verificar
+    systemctl restart named
     
-    print_ok "DNS anclado exitosamente a la IP DHCP: $IP_DHCP"
+    if systemctl is-active --quiet named; then
+        print_ok "DNS anclado exitosamente a: $IP_OBJETIVO"
+    else
+        print_error "named no pudo iniciar. Revisa los permisos de /var/named"
+    fi
     
-    # Reparar el nombre del servidor para que no salga UnKnown
-    reparar_server_unknown_linux "$IP_DHCP"
+    reparar_server_unknown_linux "$IP_OBJETIVO"
 }
