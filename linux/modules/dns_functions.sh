@@ -12,16 +12,42 @@ ZONE_DIR="/var/named"
 # ASEGURAR PERMISOS CORRECTOS PARA ZONAS
 # =====================================================
 
+# =====================================================
+# ASEGURAR PERMISOS CORRECTOS PARA DNS (BIND)
+# =====================================================
+
 asegurar_permisos_dns() {
     verificar_root
+    print_section "CONFIGURANDO PERMISOS Y SELINUX"
 
+    # 1. Asegurar que el directorio de zonas existe
     mkdir -p "$ZONE_DIR"
 
-    chown root:named "$ZONE_DIR"
-    chmod 770 "$ZONE_DIR"
+    # 2. Permisos de Directorio: 770 permite que el grupo 'named' escriba (necesario para archivos .jnl y temporales)
+    # Cambiamos recursivamente la propiedad al grupo 'named'
+    chown -R root:named "$ZONE_DIR"
+    chmod -R 770 "$ZONE_DIR"
 
-    # Contexto SELinux correcto para zonas
+    # 3. Permisos del archivo de configuración principal
+    if [[ -f "$CONF" ]]; then
+        chown root:named "$CONF"
+        chmod 664 "$CONF"
+    fi
+
+    # 4. SELinux: Esto es vital en Fedora. 
+    # 'named_conf_t' para el archivo de configuración
+    # 'named_zone_t' para la carpeta de zonas y sus archivos
+    print_info "Aplicando contextos de seguridad SELinux..."
+    
+    # Aseguramos que los archivos tengan el tipo correcto en la base de datos de SELinux
+    semanage fcontext -a -t named_conf_t "$CONF" 2>/dev/null
+    semanage fcontext -a -t named_zone_t "$ZONE_DIR(/.*)?" 2>/dev/null
+    
+    # Aplicamos los cambios al sistema de archivos
+    restorecon -Rv "$CONF" &>/dev/null
     restorecon -Rv "$ZONE_DIR" &>/dev/null
+
+    print_ok "Permisos y contextos SELinux actualizados"
 }
 
 
