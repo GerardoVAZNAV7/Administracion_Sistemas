@@ -15,7 +15,7 @@ function Menu-FTP {
         Write-Host "5) RECONFIGURAR SERVICIO (Reset)"
         Write-Host "0) Salir"
         Write-Host "---------------------------------------"
-        $opcion = Read-Host "Seleccione una opción"
+        $opcion = Read-Host "Seleccione una opcion"
 
         switch ($opcion) {
             "1" {

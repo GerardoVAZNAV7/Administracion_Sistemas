@@ -1,39 +1,64 @@
 # --- Configuración Inicial e Idempotencia ---
+# --- Configuración Inicial e Idempotencia (Instalación Silenciosa) ---
 function Inicializar-SistemaFTP {
-    Write-Host "[+] Instalando Servidor Web (IIS) y Servicio FTP..." -ForegroundColor Cyan
-    Install-WindowsFeature Web-Server, Web-Ftp-Server, Web-Mgmt-Console -IncludeManagementTools
+    Write-Host "[+] Verificando componentes de Windows Server..." -ForegroundColor Cyan
+    
+    # Instalación silenciosa de IIS y el servicio FTP
+    # -NoRestart: Evita que el servidor se reinicie solo
+    # &>/dev/null: (Equivalente en PS) Out-Null para silenciar la barra de progreso
+    Write-Host "[+] Instalando IIS-FTPServer de forma silenciosa. Por favor, espere..." -ForegroundColor Gray
+    Install-WindowsFeature Web-Server, Web-Ftp-Server, Web-Mgmt-Console -IncludeManagementTools -NoRestart | Out-Null
 
     $ftpRoot = "C:\inetpub\ftproot"
     $basePath = "$ftpRoot\LocalUser"
 
-    # Crear estructura base
-    # En Windows IIS, 'LocalUser\Public' se mapea comúnmente como carpeta compartida
-    New-Item -ItemType Directory -Force -Path "$basePath\Public", "$ftpRoot\general", "$basePath\reprobados", "$basePath\recursadores"
-
-    # Crear grupos locales si no existen
-    if (!(Get-LocalGroup -Name "ftp-users" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "ftp-users" }
-    if (!(Get-LocalGroup -Name "reprobados" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "reprobados" }
-    if (!(Get-LocalGroup -Name "recursadores" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "recursadores" }
-
-    # Configurar Sitio FTP en IIS
-    Import-Module WebAdministration
-    if (!(Test-Path "IIS:\Sites\Default FTP Site")) {
-        New-WebFtpSite -Name "Default FTP Site" -Port 21 -PhysicalPath $ftpRoot -Force
+    # Crear estructura base de directorios de forma forzada e idempotente
+    $directorios = @(
+        "$basePath\Public", 
+        "$ftpRoot\general", 
+        "$basePath\reprobados", 
+        "$basePath\recursadores"
+    )
+    foreach ($dir in $directorios) {
+        if (!(Test-Path $dir)) {
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        }
     }
 
-    # Configurar Aislamiento de Usuarios
+    # Crear grupos locales (Idempotente)
+    foreach ($group in @("ftp-users", "reprobados", "recursadores")) {
+        if (!(Get-LocalGroup -Name $group -ErrorAction SilentlyContinue)) { 
+            New-LocalGroup -Name $group | Out-Null
+            Write-Host "[✓] Grupo $group creado." -ForegroundColor Gray
+        }
+    }
+
+    # Configurar Sitio FTP en IIS mediante el módulo WebAdministration
+    Import-Module WebAdministration
+    if (!(Test-Path "IIS:\Sites\Default FTP Site")) {
+        New-WebFtpSite -Name "Default FTP Site" -Port 21 -PhysicalPath $ftpRoot -Force | Out-Null
+    }
+
+    # Configurar Aislamiento de Usuarios (Requerimiento Técnico)
     Set-WebConfigurationProperty -Filter "/system.applicationHost/sites/site[@name='Default FTP Site']/ftpServer/userIsolation" -Name "mode" -Value "IsolateUsers"
 
-    # Permisos NTFS en la carpeta General (Lectura para todos, Escritura para registrados)
+    # Permisos NTFS Recursivos en General: g:ftp-users (Escritura), Todos (Lectura)
     $acl = Get-Acl "$ftpRoot\general"
+    # ContainerInherit, ObjectInherit asegura que carpetas y archivos nuevos hereden el permiso
     $regRule = New-Object System.Security.AccessControl.FileSystemAccessRule("ftp-users","Modify", "ContainerInherit, ObjectInherit", "None", "Allow")
     $anonRule = New-Object System.Security.AccessControl.FileSystemAccessRule("Everyone","ReadAndExecute", "ContainerInherit, ObjectInherit", "None", "Allow")
+    
     $acl.SetAccessRule($regRule)
     $acl.SetAccessRule($anonRule)
     Set-Acl "$ftpRoot\general" $acl
 
+    # Abrir Firewall y asegurar que el servicio esté corriendo
     Configurar-SeguridadFirewall
-    Write-Host "[✓] Servidor FTP configurado y listo." -ForegroundColor Green
+    
+    Start-Service ftpsvc -ErrorAction SilentlyContinue
+    Restart-Service ftpsvc
+    
+    Write-Host "[✓] Servidor FTP Windows instalado y configurado correctamente." -ForegroundColor Green
 }
 
 # --- Crear Usuario y Estructura Segmentada ---
