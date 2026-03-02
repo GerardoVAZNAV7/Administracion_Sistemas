@@ -42,9 +42,12 @@ EOF
     sudo setfacl -R -d -m g:ftp-users:rwx /srv/ftp/general
     sudo chmod 755 /srv/ftp/general
 
+    # Llamar a la seguridad
+    configurar_seguridad_ftp
+
     sudo systemctl restart vsftpd
     sudo systemctl enable vsftpd &>/dev/null
-    echo "[✓] Sistema inicializado."
+    echo "[✓] Sistema inicializado completamente."
 }
 
 # --- Crear Usuario y Estructura ---
@@ -161,4 +164,18 @@ function verificar_servicio_ftp() {
     # 5. Usuarios Conectados actualmente
     echo "Conexiones actuales: $(who | grep -c ftp 2>/dev/null || echo 0)"
     echo "---------------------------------------"
+}
+
+function configurar_seguridad_ftp() {
+    echo "[+] Configurando Firewall (firewalld)..."
+    # Abrir puerto 21 y rango pasivo
+    sudo firewall-cmd --permanent --add-service=ftp &>/dev/null
+    sudo firewall-cmd --permanent --add-port=40000-40010/tcp &>/dev/null
+    sudo firewall-cmd --reload &>/dev/null
+
+    echo "[+] Ajustando políticas de SELinux..."
+    # Permitir que el demonio FTP tenga acceso total a los archivos y homes
+    sudo setsebool -P ftpd_full_access on &>/dev/null
+    sudo setsebool -P tftp_home_dir on &>/dev/null
+    echo "[✓] Firewall y SELinux configurados."
 }
