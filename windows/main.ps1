@@ -9,6 +9,7 @@
 . .\modules\menu_dhcp.ps1
 . .\modules\menu_dns.ps1
 . .\modules\menu_ssh.ps1
+. .\modules\menu_ftp.ps1
 
 
 # =====================================================
@@ -51,6 +52,7 @@ do {
     Write-Host "2) Practica 2 - DHCP"
     Write-Host "3) Practica 3 - DNS"
     Write-Host "4) Practica 4 - SSH"
+    Write-Host "5) Practica 5 - FTP"
     Write-Host "0) Salir"
     Write-Host ""
 
@@ -65,6 +67,8 @@ do {
         "3" { Menu-DNS }
 
         "4" { Menu-SSH }
+
+        "5" { Menu-FTP }
 
         "0" {
             Write-Color "Saliendo del sistema..." Yellow
