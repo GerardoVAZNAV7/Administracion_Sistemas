@@ -2,10 +2,10 @@
 
 # --- Configuración Inicial e Idempotencia ---
 function inicializar_sistema() {
-    echo "[+] Verificando dependencias e instalando vsftpd..."
+    echo "[+] Instalando dependencias en Fedora..."
     sudo dnf install -y vsftpd util-linux acl &>/dev/null
 
-    # Configuración de vsftpd
+    # Configuración de vsftpd CORREGIDA para FileZilla
     cat <<EOF | sudo tee /etc/vsftpd/vsftpd.conf > /dev/null
 anonymous_enable=YES
 local_enable=YES
@@ -13,6 +13,7 @@ write_enable=YES
 local_umask=022
 chroot_local_user=YES
 allow_writeable_chroot=YES
+check_shell=NO
 anon_root=/srv/ftp/anonymous
 no_anon_password=YES
 anon_world_readable_only=YES
@@ -23,31 +24,27 @@ listen_ipv6=YES
 pam_service_name=vsftpd
 EOF
 
-    # Crear estructura base
+    # Estructura de directorios
     sudo mkdir -p /srv/ftp/{groups/reprobados,groups/recursadores,general,anonymous/general,users}
     
-    # Montaje para el usuario anónimo (Solo lectura)
     if ! mountpoint -q /srv/ftp/anonymous/general; then
         sudo mount --bind /srv/ftp/general /srv/ftp/anonymous/general
         sudo mount -o remount,ro,bind /srv/ftp/anonymous/general
     fi
 
-    # Asegurar existencia de grupos
     sudo groupadd -f reprobados
     sudo groupadd -f recursadores
     sudo groupadd -f ftp-users
 
-    # Aplicar ACLs base para la carpeta general
     sudo setfacl -R -m g:ftp-users:rwx /srv/ftp/general
     sudo setfacl -R -d -m g:ftp-users:rwx /srv/ftp/general
     sudo chmod 755 /srv/ftp/general
 
-    # Llamar a la seguridad
     configurar_seguridad_ftp
 
     sudo systemctl restart vsftpd
     sudo systemctl enable vsftpd &>/dev/null
-    echo "[✓] Sistema inicializado completamente."
+    echo "[✓] Sistema inicializado y listo para FileZilla."
 }
 
 # --- Crear Usuario y Estructura ---
@@ -168,16 +165,18 @@ function verificar_servicio_ftp() {
 
 function configurar_seguridad_ftp() {
     echo "[+] Configurando Firewall (firewalld)..."
-    # Abrir puerto 21 y rango pasivo
     sudo firewall-cmd --permanent --add-service=ftp &>/dev/null
     sudo firewall-cmd --permanent --add-port=40000-40010/tcp &>/dev/null
     sudo firewall-cmd --reload &>/dev/null
 
     echo "[+] Ajustando políticas de SELinux..."
-    # Permitir que el demonio FTP tenga acceso total a los archivos y homes
     sudo setsebool -P ftpd_full_access on &>/dev/null
     sudo setsebool -P tftp_home_dir on &>/dev/null
-    echo "[✓] Firewall y SELinux configurados."
+    
+    # Asegurar que nologin sea una shell válida para vsftpd
+    if ! grep -q "/sbin/nologin" /etc/shells; then
+        echo "/sbin/nologin" | sudo tee -a /etc/shells > /dev/null
+    fi
 }
 
 # --- Listar Usuarios del Servicio ---
@@ -186,23 +185,30 @@ function listar_usuarios_ftp() {
     printf "%-20s | %-20s\n" "USUARIO" "GRUPO ACADÉMICO"
     echo "------------------------------------------------"
     
-    # Obtenemos los miembros del grupo ftp-users
-    members=$(grep "^ftp-users:" /etc/group | cut -d: -f4 | tr ',' ' ')
+    # Buscamos en /etc/passwd todos los usuarios cuyo GID corresponda al de ftp-users
+    FTP_GID=$(grep "^ftp-users:" /etc/group | cut -d: -f3)
     
-    if [ -z "$members" ]; then
-        echo "No hay usuarios registrados aún."
+    if [ -z "$FTP_GID" ]; then
+        echo "No se encontró el grupo ftp-users."
     else
-        for u in $members; do
-            # Detectar a qué grupo académico pertenece
-            if id "$u" | grep -q "reprobados"; then
-                gr="reprobados"
-            elif id "$u" | grep -q "recursadores"; then
-                gr="recursadores"
-            else
-                gr="sin grupo"
-            fi
-            printf "%-20s | %-20s\n" "$u" "$gr"
-        done
+        # Listamos usuarios cuyo GID primario sea el de ftp-users
+        members=$(awk -F: -v gid="$FTP_GID" '$4 == gid {print $1}' /etc/passwd)
+        
+        if [ -z "$members" ]; then
+            echo "No hay usuarios registrados aún."
+        else
+            for u in $members; do
+                # Detectar grupo académico (estos suelen ser secundarios)
+                if id "$u" | grep -q "reprobados"; then
+                    gr="reprobados"
+                elif id "$u" | grep -q "recursadores"; then
+                    gr="recursadores"
+                else
+                    gr="General / Sin Grupo"
+                fi
+                printf "%-20s | %-20s\n" "$u" "$gr"
+            done
+        fi
     fi
     echo "------------------------------------------------"
 }
