@@ -147,8 +147,16 @@ function verificar_servicio_ftp() {
     fi
 
     # 4. IP del Servidor (Para conectar desde FileZilla)
-    echo -n "IP del servidor: "
-    hostname -I | awk '{print $1}'
+   echo -n "IP del servidor (enp0s9): "
+    
+    # Intentamos obtener la IP de enp0s9 específicamente
+    IP_ENP0S9=$(ip -4 addr show enp0s9 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}')
+    
+    if [ -z "$IP_ENP0S9" ]; then
+        echo -e "\e[31m[ No se encontró IP en enp0s9 ]\e[0m"
+    else
+        echo -e "\e[34m$IP_ENP0S9\e[0m"
+    fi
 
     # 5. Usuarios Conectados actualmente
     echo "Conexiones actuales: $(who | grep -c ftp 2>/dev/null || echo 0)"
