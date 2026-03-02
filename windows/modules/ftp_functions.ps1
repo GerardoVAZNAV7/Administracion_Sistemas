@@ -32,6 +32,7 @@ function Initialize-FTPServer {
     $acl.SetAccessRule($ar)
     Set-Acl "$basePath\general" $acl
 
+    Set-FTPFirewall
     Write-Host "[✓] Servidor base configurado." -ForegroundColor Green
 }
 
@@ -87,4 +88,20 @@ function Edit-FTPUserGroup {
     New-WebVirtualDirectory -Site "FTPServer" -Name "$NewGroup" -PhysicalPath "C:\ftp_data\groups\$NewGroup" -Name "$Username/$NewGroup"
 
     Write-Host "[✓] Usuario $Username movido a $NewGroup." -ForegroundColor Green
+}
+function Set-FTPFirewall {
+    Write-Host "[+] Configurando Firewall de Windows y Puertos Pasivos..." -ForegroundColor Cyan
+
+    # 1. Crear reglas de entrada para el puerto 21 y el rango pasivo
+    # Usamos -ErrorAction SilentlyContinue por si la regla ya existe (idempotencia)
+    New-NetFirewallRule -Name "FTP_Control" -DisplayName "FTP Control (21)" -Direction Inbound -Protocol TCP -LocalPort 21 -Action Allow -ErrorAction SilentlyContinue | Out-Null
+    New-NetFirewallRule -Name "FTP_Passive" -DisplayName "FTP Passive Data (40000-40010)" -Direction Inbound -Protocol TCP -LocalPort 40000-40010 -Action Allow -ErrorAction SilentlyContinue | Out-Null
+
+    # 2. Configurar el rango de puertos pasivos en la configuración de IIS
+    Set-WebConfigurationProperty -Filter "/system.ftpServer/firewallSupport" -Name "lowDataPort" -Value 40000 -PSPath "IIS:\"
+    Set-WebConfigurationProperty -Filter "/system.ftpServer/firewallSupport" -Name "highDataPort" -Value 40010 -PSPath "IIS:\"
+
+    # 3. Reiniciar el servicio de FTP para que reconozca el rango pasivo
+    Restart-Service ftpsvc
+    Write-Host "[✓] Firewall e IIS configurados para conexiones desde la máquina física." -ForegroundColor Green
 }
