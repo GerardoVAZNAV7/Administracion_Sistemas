@@ -1,123 +1,90 @@
-#!/bin/bash
+# --- 1. Inicialización e Idempotencia ---
+function Initialize-FTPServer {
+    Write-Host "[+] Instalando Rol Web-Server e IIS-FTPServer..." -ForegroundColor Cyan
+    Install-WindowsFeature Web-Server, Web-Ftp-Server, Web-Mgmt-Console -IncludeManagementTools | Out-Null
 
-# --- Configuración Inicial e Idempotencia ---
-function inicializar_sistema() {
-    echo "[+] Verificando dependencias e instalando vsftpd..."
-    sudo dnf install -y vsftpd util-linux acl &>/dev/null
+    # Crear rutas físicas de datos
+    $basePath = "C:\ftp_data"
+    $paths = @("$basePath\general", "$basePath\groups\reprobados", "$basePath\groups\recursadores", "$basePath\users")
+    foreach ($p in $paths) { if (!(Test-Path $p)) { New-Item -Path $p -ItemType Directory } }
 
-    # Configuración de vsftpd
-    cat <<EOF | sudo tee /etc/vsftpd/vsftpd.conf > /dev/null
-anonymous_enable=YES
-local_enable=YES
-write_enable=YES
-local_umask=022
-chroot_local_user=YES
-allow_writeable_chroot=YES
-anon_root=/srv/ftp/anonymous
-no_anon_password=YES
-anon_world_readable_only=YES
-pasv_min_port=40000
-pasv_max_port=40010
-listen=NO
-listen_ipv6=YES
-pam_service_name=vsftpd
-EOF
+    # Crear carpetas para el aislamiento de IIS (Requerido por Windows)
+    $iisRoot = "C:\inetpub\ftproot\LocalUser"
+    if (!(Test-Path "$iisRoot\Public")) { New-Item -Path "$iisRoot\Public" -ItemType Directory }
 
-    # Crear estructura base
-    sudo mkdir -p /srv/ftp/{groups/reprobados,groups/recursadores,general,anonymous/general,users}
+    # Crear Grupos Locales
+    if (!(Get-LocalGroup -Name "reprobados" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "reprobados" }
+    if (!(Get-LocalGroup -Name "recursadores" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "recursadores" }
+    if (!(Get-LocalGroup -Name "ftp_users" -ErrorAction SilentlyContinue)) { New-LocalGroup -Name "ftp_users" }
+
+    # Configurar Sitio FTP en IIS
+    Import-Module WebAdministration
+    if (!(Get-WebSite -Name "FTPServer" -ErrorAction SilentlyContinue)) {
+        New-WebFtpSite -Name "FTPServer" -Port 21 -PhysicalPath "C:\inetpub\ftproot" -Force
+    }
+
+    # Habilitar Aislamiento de Usuario
+    Set-ItemProperty "IIS:\Sites\FTPServer" -Name ftpServer.userIsolation.mode -Value "IsolateUsers"
+
+    # Permisos NTFS base para la carpeta General (Lectura para todos, Escritura para logueados)
+    $acl = Get-Acl "$basePath\general"
+    $ar = New-Object System.Security.AccessControl.FileSystemAccessRule("Users", "ReadAndExecute", "ContainerInherit, ObjectInherit", "None", "Allow")
+    $acl.SetAccessRule($ar)
+    Set-Acl "$basePath\general" $acl
+
+    Write-Host "[✓] Servidor base configurado." -ForegroundColor Green
+}
+
+# --- 2. Alta de Usuarios y Directorios Virtuales ---
+function Add-FTPUser {
+    param($Username, $Password, $GroupName)
+
+    # Crear Usuario Local
+    $securePass = ConvertTo-SecureString $Password -AsPlainText -Force
+    if (!(Get-LocalUser -Name $Username -ErrorAction SilentlyContinue)) {
+        New-LocalUser -Name $Username -Password $securePass -FullName "Usuario FTP $Username" -Description "SysAdmin Practice"
+        Add-LocalGroupMember -Group "ftp_users" -Member $Username
+        Add-LocalGroupMember -Group $GroupName -Member $Username
+    }
+
+    # Carpeta de aislamiento y subcarpeta personal
+    $userPath = "C:\inetpub\ftproot\LocalUser\$Username"
+    if (!(Test-Path $userPath)) { New-Item -Path $userPath -ItemType Directory }
     
-    # Montaje para el usuario anónimo (Solo lectura)
-    if ! mountpoint -q /srv/ftp/anonymous/general; then
-        sudo mount --bind /srv/ftp/general /srv/ftp/anonymous/general
-        sudo mount -o remount,ro,bind /srv/ftp/anonymous/general
-    fi
+    $personalDataPath = "C:\ftp_data\users\$Username"
+    if (!(Test-Path $personalDataPath)) { New-Item -Path $personalDataPath -ItemType Directory }
 
-    # Asegurar existencia de grupos
-    sudo groupadd -f reprobados
-    sudo groupadd -f recursadores
-    sudo groupadd -f ftp-users
+    # Permisos NTFS en carpeta personal
+    $acl = Get-Acl $personalDataPath
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($Username, "FullControl", "ContainerInherit, ObjectInherit", "None", "Allow")
+    $acl.SetAccessRule($rule)
+    Set-Acl $personalDataPath $acl
 
-    # Aplicar ACLs base para la carpeta general
-    sudo setfacl -R -m g:ftp-users:rwx /srv/ftp/general
-    sudo setfacl -R -d -m g:ftp-users:rwx /srv/ftp/general
-    sudo chmod 755 /srv/ftp/general
+    # Crear Directorios Virtuales para la estructura visual solicitada
+    # Estos aparecerán como carpetas dentro de la raíz del usuario al loguearse
+    New-WebVirtualDirectory -Site "FTPServer" -Name "general" -PhysicalPath "C:\ftp_data\general" -Name "$Username/general"
+    New-WebVirtualDirectory -Site "FTPServer" -Name "$GroupName" -PhysicalPath "C:\ftp_data\groups\$GroupName" -Name "$Username/$GroupName"
+    New-WebVirtualDirectory -Site "FTPServer" -Name "$Username" -PhysicalPath "$personalDataPath" -Name "$Username/$Username"
 
-    sudo systemctl restart vsftpd
-    sudo systemctl enable vsftpd &>/dev/null
-    echo "[✓] Sistema inicializado."
+    # Reglas de Autorización de FTP (Permitir lectura/escritura)
+    Add-WebConfiguration "/system.ftpServer/security/authorization" -value @{accessType="Allow";roles="";permissions="Read,Write";users=$Username} -PSPath "IIS:\" -location "FTPServer/$Username"
+
+    Write-Host "[✓] Usuario $Username configurado en grupo $GroupName." -ForegroundColor Green
 }
 
-# --- Crear Usuario y Estructura ---
-function crear_usuario() {
-    local user=$1
-    local pass=$2
-    local group=$3
+# --- 3. Modificación de Grupo ---
+function Edit-FTPUserGroup {
+    param($Username, $NewGroup)
 
-    if id "$user" &>/dev/null; then
-        echo "[!] El usuario $user ya existe."
-        return
-    fi
+    $oldGroup = if ($NewGroup -eq "reprobados") { "recursadores" } else { "reprobados" }
 
-    sudo useradd -m -g ftp-users -G "$group" -s /sbin/nologin "$user"
-    echo "$user:$pass" | sudo chpasswd
+    # Cambiar grupo local
+    Remove-LocalGroupMember -Group $oldGroup -Member $Username -ErrorAction SilentlyContinue
+    Add-LocalGroupMember -Group $NewGroup -Member $Username
 
-    configurar_montajes "$user" "$group"
-    aplicar_permisos_personales "$user" "$group"
-    echo "[✓] Usuario $user creado y configurado."
-}
+    # Actualizar Directorio Virtual (Eliminar el anterior y crear el nuevo)
+    Remove-WebVirtualDirectory -Site "FTPServer" -Name "$Username/$oldGroup" -ErrorAction SilentlyContinue
+    New-WebVirtualDirectory -Site "FTPServer" -Name "$NewGroup" -PhysicalPath "C:\ftp_data\groups\$NewGroup" -Name "$Username/$NewGroup"
 
-# --- Lógica de Montajes (Punto Clave) ---
-function configurar_montajes() {
-    local user=$1
-    local group=$2
-    local home="/home/$user"
-
-    sudo mkdir -p "$home/general" "$home/$group" "$home/$user"
-
-    # Limpiar montajes previos si existen (Evita errores de duplicados)
-    sudo umount "$home/general" 2>/dev/null
-    sudo umount "$home/reprobados" 2>/dev/null
-    sudo umount "$home/recursadores" 2>/dev/null
-
-    # Montajes actuales
-    sudo mount --bind /srv/ftp/general "$home/general"
-    sudo mount --bind /srv/ftp/groups/"$group" "$home/$group"
-}
-
-function aplicar_permisos_personales() {
-    local user=$1
-    local group=$2
-    local home="/home/$user"
-
-    # Carpeta personal: solo el dueño escribe
-    sudo chown "$user":"$group" "$home/$user"
-    sudo chmod 700 "$home/$user"
-
-    # ACLs para las carpetas de grupo en /srv/ftp
-    sudo setfacl -R -m g:"$group":rwx /srv/ftp/groups/"$group"
-    sudo setfacl -R -d -m g:"$group":rwx /srv/ftp/groups/"$group"
-}
-
-# --- Modificar Grupo ---
-function modificar_grupo_usuario() {
-    local user=$1
-    local new_group=$2
-
-    if ! id "$user" &>/dev/null; then
-        echo "[!] El usuario no existe."
-        return
-    fi
-
-    # Cambiar grupo en el sistema
-    sudo usermod -G "$new_group" "$user"
-    
-    # Limpiar carpetas viejas en el home del usuario
-    sudo umount "/home/$user/reprobados" 2>/dev/null
-    sudo umount "/home/$user/recursadores" 2>/dev/null
-    sudo rm -rf "/home/$user/reprobados" "/home/$user/recursadores"
-
-    # Reconfigurar con el nuevo grupo
-    configurar_montajes "$user" "$new_group"
-    aplicar_permisos_personales "$user" "$new_group"
-    echo "[✓] Usuario $user movido a $new_group con éxito."
+    Write-Host "[✓] Usuario $Username movido a $NewGroup." -ForegroundColor Green
 }
