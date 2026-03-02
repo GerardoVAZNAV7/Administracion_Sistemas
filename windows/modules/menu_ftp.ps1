@@ -1,51 +1,55 @@
 function Menu-FTP {
     # Importamos las funciones si no están cargadas
-    if (!(Get-Command Initialize-FTPServer -ErrorAction SilentlyContinue)) {
-        . .\ftp_functions.ps1
-    }
+. "$PSScriptRoot\FTP_Functions.ps1"
 
-    # Inicializar configuración base al entrar al módulo
-    Clear-Host
-    Write-Host "--- Inicializando módulo FTP ---" -ForegroundColor Gray
-    Initialize-FTPServer
-
-    $salirModulo = $false
 
     do {
-        Write-Host "`n===============================================" -ForegroundColor Gray
-        Write-Host "   MENU FTP SYSADMIN (Windows Server 2022)" -ForegroundColor Yellow
-        Write-Host "===============================================" -ForegroundColor Gray
-        Write-Host "1. Alta de usuarios (n)"
-        Write-Host "2. Cambiar grupo de usuario"
-        Write-Host "3. Regresar al Menú Principal"
+        Clear-Host
+        Write-Host "======================================="
+        Write-Host "   ADMINISTRADOR FTP - WINDOWS SERVER"
+        Write-Host "======================================="
+        Write-Host "1) Alta masiva de usuarios"
+        Write-Host "2) Modificar grupo de usuario"
+        Write-Host "3) LISTAR USUARIOS REGISTRADOS"
+        Write-Host "4) Verificar estado del servicio"
+        Write-Host "5) RECONFIGURAR SERVICIO (Reset)"
+        Write-Host "0) Salir"
+        Write-Host "---------------------------------------"
         $opcion = Read-Host "Seleccione una opción"
 
         switch ($opcion) {
             "1" {
-                $n = Read-Host "¿Cuántos usuarios desea crear?"
+                $n = Read-Host "Número de usuarios"
                 for ($i=1; $i -le $n; $i++) {
-                    Write-Host "`n--- Registro de Usuario $i ---" -ForegroundColor Cyan
-                    $user = Read-Host "Nombre de usuario"
-                    $pass = Read-Host "Contraseña"
-                    $g_op = Read-Host "Grupo (1: reprobados, 2: recursadores)"
-                    $group = if ($g_op -eq "1") { "reprobados" } else { "recursadores" }
-                    Add-FTPUser -Username $user -Password $pass -GroupName $group
+                    $uname = Read-Host "Username"
+                    $upass = Read-Host "Password"
+                    $g_op = Read-Host "Grupo (1:reprobados, 2:recursadores)"
+                    $ugroup = if ($g_op -eq "1") { "reprobados" } else { "recursadores" }
+                    Crear-UsuarioFTP $uname $upass $ugroup
                 }
             }
             "2" {
-                Write-Host "`n--- Modificación de Grupo ---" -ForegroundColor Cyan
-                $user = Read-Host "Nombre del usuario a modificar"
-                $g_op = Read-Host "Nuevo Grupo (1: reprobados, 2: recursadores)"
-                $group = if ($g_op -eq "1") { "reprobados" } else { "recursadores" }
-                Edit-FTPUserGroup -Username $user -NewGroup $group
+                $uname = Read-Host "Usuario"
+                $g_op = Read-Host "Nuevo Grupo (1:reprobados, 2:recursadores)"
+                $newGroup = if ($g_op -eq "1") { "reprobados" } else { "recursadores" }
+                # Lógica simplificada de cambio de grupo
+                Remove-LocalGroupMember -Group "reprobados", "recursadores" -Member $uname -ErrorAction SilentlyContinue
+                Add-LocalGroupMember -Group $newGroup -Member $uname
+                Write-Host "Grupo actualizado." -ForegroundColor Green
             }
-            "3" { 
-                Write-Host "Saliendo del módulo FTP..." -ForegroundColor Gray
-                $salirModulo = $true 
+            "3" {
+                Get-LocalGroupMember -Group "ftp-users" | Select-Object Name, PrincipalSource
+                Pause
             }
-            Default { 
-                Write-Host "Opción inválida." -ForegroundColor Red 
+            "4" {
+                Get-Service ftpsvc | Select-Object Name, Status, DisplayName
+                Get-NetIPAddress -AddressFamily IPv4 | Where-Object InterfaceAlias -like "*Ethernet 3*" | Select-Object IPAddress
+                Pause
             }
+            "5" { Inicializar-SistemaFTP }
+            "0" { return }
         }
-    } while (-not $salirModulo)
+    } while ($true)
 }
+
+Mostrar-Menu
