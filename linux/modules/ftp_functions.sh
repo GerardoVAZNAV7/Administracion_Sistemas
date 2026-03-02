@@ -121,3 +121,36 @@ function modificar_grupo_usuario() {
     aplicar_permisos_personales "$user" "$new_group"
     echo "[✓] Usuario $user movido a $new_group con éxito."
 }
+
+# --- Verificación del Servicio ---
+function verificar_servicio_ftp() {
+    echo -e "\n--- [ DIAGNÓSTICO DEL SERVICIO FTP ] ---"
+    
+    # 1. Estado del Servicio
+    if systemctl is-active --quiet vsftpd; then
+        echo -e "Estado: \e[32m[ EN EJECUCIÓN ]\e[0m"
+    else
+        echo -e "Estado: \e[31m[ DETENIDO ]\e[0m"
+    fi
+
+    # 2. Puertos Escuchando (Control y Pasivos)
+    echo -n "Puertos: "
+    ss -tunlp | grep -E '(:21|:4000[0-9]|:40010)' | awk '{print $5}' | tr '\n' ' '
+    echo ""
+
+    # 3. Verificación de Montajes
+    echo -n "Montaje Anónimo: "
+    if mountpoint -q /srv/ftp/anonymous/general; then
+        echo -e "\e[32m[ OK ]\e[0m"
+    else
+        echo -e "\e[31m[ FALLÓ ]\e[0m"
+    fi
+
+    # 4. IP del Servidor (Para conectar desde FileZilla)
+    echo -n "IP del servidor: "
+    hostname -I | awk '{print $1}'
+
+    # 5. Usuarios Conectados actualmente
+    echo "Conexiones actuales: $(who | grep -c ftp 2>/dev/null || echo 0)"
+    echo "---------------------------------------"
+}

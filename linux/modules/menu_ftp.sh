@@ -1,11 +1,9 @@
 #!/bin/bash
 
 # ===== CARGAR FUNCIONES DE FTP =====
-# Usamos la ruta relativa al orquestador
 source "$BASE_DIR/modules/ftp_functions.sh"
 
 menu_ftp() {
-    # Inicializar configuración base al entrar al módulo por primera vez
     clear
     inicializar_sistema
 
@@ -15,6 +13,7 @@ menu_ftp() {
         echo "======================================="
         echo "1) Alta masiva de usuarios"
         echo "2) Modificar grupo de un usuario existente"
+        echo "3) Verificar estado del servicio" # Nueva opción
         echo "0) Regresar al Menú Principal"
         echo "---------------------------------------"
         read -p "Seleccione una opción: " opcion
@@ -39,9 +38,12 @@ menu_ftp() {
                 [[ "$g_op" == "1" ]] && ugroup="reprobados" || ugroup="recursadores"
                 modificar_grupo_usuario "$uname" "$ugroup"
                 ;;
+            3)
+                verificar_servicio_ftp # Llamada a la nueva función
+                ;;
             0)
                 echo "Regresando al menú principal..."
-                break # Rompe el ciclo del submenú para volver al orquestador
+                break
                 ;;
             *)
                 echo "Opción no válida."
