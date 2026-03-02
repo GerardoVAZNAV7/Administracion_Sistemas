@@ -36,9 +36,15 @@ EOF
     sudo groupadd -f recursadores
     sudo groupadd -f ftp-users
 
+    # 1. Cambiamos el dueño del grupo a ftp-users
+    sudo chgrp ftp-users /srv/ftp/general
+
+    # 2. Permiso 775: El grupo (ftp-users) ahora puede escribir
+    sudo chmod 775 /srv/ftp/general
+
+    # 3. ACLs para asegurar que archivos nuevos hereden permisos de escritura
     sudo setfacl -R -m g:ftp-users:rwx /srv/ftp/general
     sudo setfacl -R -d -m g:ftp-users:rwx /srv/ftp/general
-    sudo chmod 755 /srv/ftp/general
 
     configurar_seguridad_ftp
 
