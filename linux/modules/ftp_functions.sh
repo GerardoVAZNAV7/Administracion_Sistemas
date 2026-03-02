@@ -179,3 +179,30 @@ function configurar_seguridad_ftp() {
     sudo setsebool -P tftp_home_dir on &>/dev/null
     echo "[✓] Firewall y SELinux configurados."
 }
+
+# --- Listar Usuarios del Servicio ---
+function listar_usuarios_ftp() {
+    echo -e "\n--- [ USUARIOS REGISTRADOS EN FTP ] ---"
+    printf "%-20s | %-20s\n" "USUARIO" "GRUPO ACADÉMICO"
+    echo "------------------------------------------------"
+    
+    # Obtenemos los miembros del grupo ftp-users
+    members=$(grep "^ftp-users:" /etc/group | cut -d: -f4 | tr ',' ' ')
+    
+    if [ -z "$members" ]; then
+        echo "No hay usuarios registrados aún."
+    else
+        for u in $members; do
+            # Detectar a qué grupo académico pertenece
+            if id "$u" | grep -q "reprobados"; then
+                gr="reprobados"
+            elif id "$u" | grep -q "recursadores"; then
+                gr="recursadores"
+            else
+                gr="sin grupo"
+            fi
+            printf "%-20s | %-20s\n" "$u" "$gr"
+        done
+    fi
+    echo "------------------------------------------------"
+}

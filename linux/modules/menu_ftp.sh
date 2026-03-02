@@ -4,7 +4,6 @@ source "$BASE_DIR/modules/ftp_functions.sh"
 
 menu_ftp() {
     clear
-    # Inicialización automática al entrar
     if ! systemctl is-active --quiet vsftpd; then
         inicializar_sistema
     fi
@@ -15,8 +14,9 @@ menu_ftp() {
         echo "======================================="
         echo "1) Alta masiva de usuarios"
         echo "2) Modificar grupo de usuario"
-        echo "3) Verificar estado/IP del servicio"
-        echo "4) RECONFIGURAR SERVICIO (Reset)"
+        echo "3) LISTAR USUARIOS REGISTRADOS"      # <-- Nueva opción
+        echo "4) Verificar estado/IP del servicio"
+        echo "5) RECONFIGURAR SERVICIO (Reset)"
         echo "0) Regresar al Menú Principal"
         echo "---------------------------------------"
         read -p "Seleccione una opción: " opcion
@@ -39,9 +39,12 @@ menu_ftp() {
                 modificar_grupo_usuario "$uname" "$ugroup"
                 ;;
             3)
-                verificar_servicio_ftp
+                listar_usuarios_ftp
                 ;;
             4)
+                verificar_servicio_ftp
+                ;;
+            5)
                 echo "Reaplicando configuración de archivos, firewall y SELinux..."
                 inicializar_sistema
                 ;;
