@@ -1,17 +1,16 @@
+. "$PSScriptRoot\ftp_functions.ps1"
 function Menu-FTP {
-    # Intentamos cargar las funciones. Si falla, el script sigue pero avisará.
-    try { . "$PSScriptRoot\FTP_Functions.ps1" } catch { }
-
     do {
         Clear-Host
         Write-Host "======================================="
-        Write-Host "   ADMINISTRADOR FTP - WINDOWS SERVER"
+        Write-Host "   ADMINISTRADOR FTP - WINDOWS SERVER 2022"
         Write-Host "======================================="
         Write-Host "1) Alta masiva de usuarios"
         Write-Host "2) Modificar grupo de usuario"
         Write-Host "3) LISTAR USUARIOS REGISTRADOS"
         Write-Host "4) Verificar estado/IP del servicio"
-        Write-Host "5) RECONFIGURAR E INSTALAR SERVICIO"
+        Write-Host "5) INSTALAR ROL FTP (Silencioso)"
+        Write-Host "6) CONFIGURAR ESTRUCTURAS Y PERMISOS"
         Write-Host "0) Salir"
         Write-Host "---------------------------------------"
         $opcion = Read-Host "Seleccione una opcion"
@@ -32,43 +31,37 @@ function Menu-FTP {
                 $uname = Read-Host "Usuario"
                 $g_op = Read-Host "Nuevo Grupo (1:reprobados, 2:recursadores)"
                 $newGroup = if ($g_op -eq "1") { "reprobados" } else { "recursadores" }
+                
+                # Remover de ambos grupos académicos y agregar al nuevo
                 Remove-LocalGroupMember -Group "reprobados", "recursadores" -Member $uname -ErrorAction SilentlyContinue
                 Add-LocalGroupMember -Group $newGroup -Member $uname
-                Write-Host "Grupo actualizado." -ForegroundColor Green
+                
+                # Actualizar enlace simbólico
+                $userHome = "C:\inetpub\ftproot\LocalUser\$uname"
+                Remove-Item "$userHome\reprobados", "$userHome\recursadores" -ErrorAction SilentlyContinue
+                cmd /c mklink /D "$userHome\$newGroup" "C:\inetpub\ftproot\LocalUser\$newGroup"
+                
+                Write-Host "Usuario movido a $newGroup con éxito." -ForegroundColor Green
                 Pause
             }
             "3" {
-                if (Get-LocalGroup -Name "ftp-users" -ErrorAction SilentlyContinue) {
-                    Get-LocalGroupMember -Group "ftp-users" | Select-Object Name, PrincipalSource
-                } else {
-                    Write-Host "[!] El sistema no ha sido inicializado (Falta grupo ftp-users)." -ForegroundColor Yellow
-                }
+                Get-LocalGroupMember -Group "ftp-users" | Select-Object Name, PrincipalSource
                 Pause
             }
             "4" {
-                Write-Host "`n--- [ DIAGNÓSTICO DEL SERVICIO ] ---" -ForegroundColor Cyan
-                # El bloque Try/Catch evita el error rojo de la imagen
                 try {
                     $svc = Get-Service ftpsvc -ErrorAction Stop
-                    Write-Host "Estado del Servicio: $($svc.Status)" -ForegroundColor Green
-                } catch {
-                    Write-Host "Estado del Servicio: [ NO INSTALADO ]" -ForegroundColor Red
-                    Write-Host "Tip: Ejecuta la opción 5 para instalar los componentes." -ForegroundColor Gray
-                }
-
-                Write-Host "IPs Disponibles:"
-                Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "127*" } | Select-Object InterfaceAlias, IPAddress
+                    Write-Host "Estado: $($svc.Status)" -ForegroundColor Green
+                } catch { Write-Host "Estado: NO INSTALADO" -ForegroundColor Red }
+                
+                Get-NetIPAddress -AddressFamily IPv4 | Where-Object InterfaceAlias -like "*Ethernet*" | Select-Object InterfaceAlias, IPAddress
                 Pause
             }
-            "5" { 
-                Write-Host "[+] Iniciando proceso de instalación e inicialización..." -ForegroundColor Cyan
-                Inicializar-SistemaFTP 
-                Pause
-            }
+            "5" { Instalar-ServicioFTP; Pause }
+            "6" { Configurar-EntornoFTP; Pause }
             "0" { return }
         }
     } while ($true)
 }
 
-# Llamada a la función
 Menu-FTP
