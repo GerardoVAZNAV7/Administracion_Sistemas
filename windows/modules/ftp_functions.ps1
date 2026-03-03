@@ -15,40 +15,34 @@ function Configure-FTPEnvironment {
     
     Import-Module WebAdministration
 
-    # 1. Crear Grupos Locales (Si no existen, icacls fallará)
-    foreach ($g in @("reprobados", "recursadores")) {
-        if (!(Get-LocalGroup -Name $g -ErrorAction SilentlyContinue)) {
-            New-LocalGroup -Name $g
-        }
+    # 1. Limpieza de procesos y carpetas
+    Write-Host "[*] Limpiando configuraciones previas..." -ForegroundColor Yellow
+    if (Get-Website -Name $ftpSiteName -ErrorAction SilentlyContinue) { 
+        Remove-WebSite -Name $ftpSiteName 
     }
 
-    # 2. Desbloquear secciones (Crucial para que Add-WebConfiguration funcione)
-    Write-Host "[*] Desbloqueando secciones de configuracion..." -ForegroundColor Yellow
+    # 2. Desbloqueo de secciones (Crucial para web.config)
     & $appcmd unlock config -section:system.ftpServer/security/authorization
     & $appcmd unlock config -section:system.ftpServer/security/authentication
+    Start-Sleep -s 1
 
-    # 3. Crear directorios con -Force para evitar errores de acceso si ya existen
-    Write-Host "[*] Creando estructura de directorios..." -ForegroundColor Yellow
-    if (!(Test-Path $basePath)) { New-Item -Path $basePath -ItemType Directory -Force }
-    $dirs = @("general", "reprobados", "recursadores")
-    foreach ($dir in $dirs) {
+    # 3. Crear directorios con fuerza bruta
+    if (!(Test-Path $basePath)) { New-Item -Path $basePath -ItemType Directory -Force | Out-Null }
+    
+    # IMPORTANTE: Tomar posesión si hay errores de acceso previo
+    takeown /f $basePath /r /d y > $null
+    icacls $basePath /grant "Administrators:(OI)(CI)F" /t > $null
+
+    foreach ($dir in @("general", "reprobados", "recursadores")) {
         $path = Join-Path $basePath $dir
         if (!(Test-Path $path)) { New-Item -Path $path -ItemType Directory -Force | Out-Null }
     }
 
-    # 4. Configurar Sitio en IIS (Limpieza previa)
-    # CORRECCIÓN: Usar Remove-WebSite
-    if (Get-Website -Name $ftpSiteName -ErrorAction SilentlyContinue) { 
-        Remove-WebSite -Name $ftpSiteName 
-        Write-Host "[-] Sitio anterior eliminado." -ForegroundColor Gray
-    }
-    
-    # Crear el sitio y esperar 2 segundos para que IIS procese el cambio
+    # 4. Configurar Sitio en IIS
     New-WebFtpSite -Name $ftpSiteName -Port 21 -PhysicalPath $basePath -Force
-    Write-Host "[*] Esperando sincronizacion de IIS..." -ForegroundColor Gray
-    Start-Sleep -s 2 
+    Start-Sleep -s 2 # Esperar a que el sistema registre el nuevo sitio
 
-    # 5. Aplicar propiedades (Ahora el índice sí existirá)
+    # 5. Aplicar Propiedades (Aquí ya no dará error de 'Index out of range')
     Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $true
@@ -57,20 +51,14 @@ function Configure-FTPEnvironment {
     # 6. Reglas de Autorización
     Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users="anonymous";permissions="Read"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
     Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";roles="Users";permissions="Read,Write"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
-
-    # 7. Aplicar permisos NTFS (Al final, una vez creadas las carpetas)
-    Write-Host "[*] Aplicando permisos NTFS..." -ForegroundColor Yellow
+    
+    # 7. Permisos NTFS Finales
     icacls $basePath /inheritance:r
     icacls $basePath /grant "Administrators:(OI)(CI)F"
     icacls $basePath /grant "SYSTEM:(OI)(CI)F"
-    icacls $basePath /grant "Users:(R)" 
-
-    icacls "$basePath\general" /grant "IUSR:(R)"
-    icacls "$basePath\general" /grant "Users:(OI)(CI)M"
-    icacls "$basePath\reprobados" /grant "reprobados:(OI)(CI)M"
-    icacls "$basePath\recursadores" /grant "recursadores:(OI)(CI)M"
+    icacls $basePath /grant "Users:(R)"
     
-    Write-Host "[+] Entorno FTP configurado sin errores." -ForegroundColor Green
+    Write-Host "[+] Entorno configurado exitosamente." -ForegroundColor Green
 }
 
 function Add-MassiveUsers {
