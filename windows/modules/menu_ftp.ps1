@@ -1,4 +1,4 @@
-# Asegurar que las funciones esten disponibles
+# Importar funciones de lógica
 $FuncPath = Join-Path $PSScriptRoot "ftp_functions.ps1"
 if (Test-Path $FuncPath) { . $FuncPath }
 

@@ -1,5 +1,5 @@
 # =====================================================
-# FUNCIONES TECNICAS PARA SERVICIO FTP (CORREGIDO)
+# FUNCIONES TECNICAS PARA SERVICIO FTP (PRACTICA 5)
 # =====================================================
 
 function Install-FTPService {
@@ -11,12 +11,13 @@ function Install-FTPService {
 function Configure-FTPEnvironment {
     $ftpSiteName = "FTPServer_Practica"
     $basePath = "C:\inetpub\ftproot"
+    $appcmd = "$env:windir\system32\inetsrv\appcmd.exe"
     
-    # --- SOLUCION AL ERROR DE BLOQUEO ---
-    Write-Host "[*] Desbloqueando secciones de configuracion de IIS..." -ForegroundColor Yellow
-    # Esta linea permite que el script modifique la autorizacion de FTP
-    Set-WebConfigurationProperty -Filter /configSections/sectionGroup[@name='system.ftpServer']/section[@name='security'] -Name overrideModeDefault -Value Allow -PSPath MACHINE/WEBROOT/APPHOST
-    
+    # --- DESBLOQUEO GARANTIZADO DE IIS ---
+    Write-Host "[*] Desbloqueando secciones de seguridad en IIS..." -ForegroundColor Yellow
+    & $appcmd unlock config -section:system.ftpServer/security/authorization
+    & $appcmd unlock config -section:system.ftpServer/security/authentication
+
     # 1. Crear directorios base
     $dirs = @("general", "reprobados", "recursadores")
     foreach ($dir in $dirs) {
@@ -24,7 +25,7 @@ function Configure-FTPEnvironment {
         if (!(Test-Path $path)) { New-Item -Path $path -ItemType Directory | Out-Null }
     }
 
-    # 2. Firewall
+    # 2. Configurar Firewall
     Set-NetFirewallRule -DisplayGroup "FTP Server" -Enabled True
 
     # 3. Configuracion de IIS
@@ -37,22 +38,26 @@ function Configure-FTPEnvironment {
         Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
     }
 
-    # 4. Regla de Acceso Anonimo (Lectura)
+    # 4. Autorizacion Anonima (Solo Lectura)
     Add-WebConfiguration "/system.ftpServer/security/authorization" -value @{accessType="Allow";roles="";permissions="Read";users="anonymous"} -PSPath "IIS:\Sites\$ftpSiteName"
     
-    Write-Host "[+] Entorno FTP configurado y desbloqueado." -ForegroundColor Green
+    Write-Host "[+] Entorno FTP configurado y desbloqueado exitosamente." -ForegroundColor Green
 }
 
 function Add-MassiveUsers {
-    # --- SOLUCION AL ERROR DE CONVERSION ---
     $n_input = Read-Host "Ingrese el numero de usuarios a crear"
+    
+    # --- SOLUCION AL ERROR [ref] ---
+    # Es necesario inicializar la variable antes de pasarla por referencia
+    $n = 0
     if (!([int]::TryParse($n_input, [ref]$n))) {
-        Write-Host "[!] Error: Debes ingresar un numero valido, no un nombre." -ForegroundColor Red
+        Write-Host "[!] Error: '$n_input' no es un numero. Operacion cancelada." -ForegroundColor Red
         return
     }
 
     $basePath = "C:\inetpub\ftproot"
 
+    # Grupos
     foreach ($grp in @("reprobados", "recursadores")) {
         if (!(Get-LocalGroup -Name $grp -ErrorAction SilentlyContinue)) { New-LocalGroup -Name $grp }
     }
@@ -63,23 +68,25 @@ function Add-MassiveUsers {
         $password = Read-Host "Password" -AsSecureString
         $grupo = Read-Host "Grupo (reprobados/recursadores)"
 
+        # Crear Usuario si no existe
         if (!(Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) {
             New-LocalUser -Name $userName -Password $password -FullName "Estudiante $userName"
             Add-LocalGroupMember -Group $grupo -Member $userName
         }
 
+        # Carpeta personal
         $userPath = Join-Path $basePath $userName
         if (!(Test-Path $userPath)) { New-Item -Path $userPath -ItemType Directory | Out-Null }
 
-        # ACLs robustas para FileZilla
+        # Permisos NTFS (Críticos para FileZilla)
         icacls $userPath /grant "${userName}:(OI)(CI)F" /inheritance:e
-        $groupPath = Join-Path $basePath $grupo
-        icacls $groupPath /grant "${grupo}:(OI)(CI)M"
+        icacls "$basePath\$grupo" /grant "${grupo}:(OI)(CI)M"
         icacls "$basePath\general" /grant "Users:(OI)(CI)M"
 
+        # Autorizacion IIS
         Add-WebConfiguration "/system.ftpServer/security/authorization" -value @{accessType="Allow";roles="";permissions="Read,Write";users=$userName} -PSPath "IIS:\Sites\FTPServer_Practica"
         
-        Write-Host "[+] Usuario $userName listo." -ForegroundColor Green
+        Write-Host "[+] Usuario $userName configurado." -ForegroundColor Green
     }
 }
 
