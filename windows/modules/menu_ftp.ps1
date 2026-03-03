@@ -1,4 +1,4 @@
-# Importar funciones de lógica
+# Cargar funciones tecnicas
 $FuncPath = Join-Path $PSScriptRoot "ftp_functions.ps1"
 if (Test-Path $FuncPath) { . $FuncPath }
 
@@ -29,7 +29,7 @@ function menu-ftp {
             }
             "5" { Update-UserGroup; Pause }
             "0" { return }
-            default { Write-Host "Opcion no valida" -ForegroundColor Red; Pause }
+            default { Write-Host "Opcion no valida"; Pause }
         }
     } while ($opcionFtp -ne "0")
 }

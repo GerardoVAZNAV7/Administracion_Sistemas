@@ -32,8 +32,7 @@ function Configure-FTPEnvironment {
         Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
     }
 
-    # 4. Autorizacion Anonima (bypass del error de bloqueo usando -Location)
-    # Esto escribe en el config central en lugar de un web.config local
+    # 4. Autorizacion Anonima (Solucion al error de bloqueo usando -Location)
     Write-Host "[*] Aplicando reglas de autorizacion global..." -ForegroundColor Yellow
     Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users="anonymous";permissions="Read"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
     
@@ -43,10 +42,10 @@ function Configure-FTPEnvironment {
 function Add-MassiveUsers {
     $n_input = Read-Host "Ingrese el numero de usuarios a crear"
     
-    # Inicializacion para evitar el error de [ref]
+    # Inicializacion para evitar el error de referencia [ref]
     $n = 0
     if (!([int]::TryParse($n_input, [ref]$n))) {
-        Write-Host "[!] Error: Debes ingresar un numero valido." -ForegroundColor Red
+        Write-Host "[!] Error: '$n_input' no es un numero valido. Operacion cancelada." -ForegroundColor Red
         return
     }
 
@@ -59,11 +58,11 @@ function Add-MassiveUsers {
     for ($i = 1; $i -le $n; $i++) {
         Write-Host "`n--- Datos Usuario $i ---" -ForegroundColor Yellow
         $userName = Read-Host "Nombre de usuario"
-        Write-Host "[!] Nota: La clave debe tener Mayus, Minus, Numero y Simbolo (ej: P@ssword123)" -ForegroundColor Gray
+        Write-Host "[!] Nota: La clave debe tener Mayus, Minus, Numero y Simbolo (ej: Practica.2026*)" -ForegroundColor Gray
         $password = Read-Host "Password" -AsSecureString
         $grupo = Read-Host "Grupo (reprobados/recursadores)"
 
-        # Crear Usuario
+        # Crear Usuario con manejo de errores para complejidad de password
         try {
             if (!(Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) {
                 New-LocalUser -Name $userName -Password $password -FullName "Estudiante $userName"
@@ -71,7 +70,7 @@ function Add-MassiveUsers {
                 Write-Host "[+] Usuario $userName creado." -ForegroundColor Green
             }
         } catch {
-            Write-Host "[!] Error al crear $userName: Verifica que la contraseña sea compleja." -ForegroundColor Red
+            Write-Host "[!] Error al crear $userName: Verifique la complejidad de la clave." -ForegroundColor Red
             continue
         }
 
@@ -83,7 +82,20 @@ function Add-MassiveUsers {
         icacls "$basePath\$grupo" /grant "${grupo}:(OI)(CI)M"
         icacls "$basePath\general" /grant "Users:(OI)(CI)M"
 
-        # Autorizacion IIS con -Location para evitar bloqueos
+        # Autorizacion IIS con -Location para evitar errores de bloqueo
         Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users=$userName;permissions="Read,Write"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location "FTPServer_Practica"
     }
+}
+
+function Update-UserGroup {
+    $user = Read-Host "Usuario a mover"
+    $nuevoGrupo = Read-Host "Nuevo grupo destino (reprobados/recursadores)"
+    
+    $gruposBusqueda = @("reprobados", "recursadores")
+    foreach ($g in $gruposBusqueda) {
+        Remove-LocalGroupMember -Group $g -Member $user -ErrorAction SilentlyContinue
+    }
+    
+    Add-LocalGroupMember -Group $nuevoGrupo -Member $user
+    Write-Host "[+] Cambio de grupo exitoso para $user" -ForegroundColor Green
 }
