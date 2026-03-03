@@ -3,9 +3,9 @@
 # =========================================================
 
 # Importar el módulo de funciones (Asegúrate que ambos archivos estén en la misma carpeta)
-. "$PSScriptRoot\FTP_Functions.ps1"
+. "$PSScriptRoot\ftp_functions.ps1"
 
-function Mostrar-Menu {
+function menu-ftp {
     do {
         Clear-Host
         Write-Host "=======================================" -ForegroundColor Yellow

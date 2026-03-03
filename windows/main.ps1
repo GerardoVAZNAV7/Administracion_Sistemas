@@ -68,7 +68,7 @@ do {
 
         "4" { Menu-SSH }
 
-        "5" { Menu-FTP }
+        "5" { menu-ftp }
 
         "0" {
             Write-Color "Saliendo del sistema..." Yellow
