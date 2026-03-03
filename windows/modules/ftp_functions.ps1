@@ -1,53 +1,53 @@
-# MÓDULO: FTP_Functions.ps1
+# =========================================================
+# MÓDULO DE FUNCIONES FTP - WINDOWS SERVER 2022
 # =========================================================
 
-# 1. Instalación del Servicio (Opción 5 del menú)
+# 1. Instalación del Rol de Servidor
 function Instalar-ServicioFTP {
-    Write-Host "[+] Iniciando instalación silenciosa de IIS y FTP Service..." -ForegroundColor Cyan
-    # Instalación de características necesarias sin reinicio
+    Write-Host "[+] Instalando IIS y Servicio FTP (Silencioso)..." -ForegroundColor Cyan
+    # Habilitación de características de IIS-FTPServer mediante PowerShell
     Install-WindowsFeature Web-Server, Web-Ftp-Server, Web-Mgmt-Console -IncludeManagementTools -NoRestart | Out-Null
     
     if (Get-Service ftpsvc -ErrorAction SilentlyContinue) {
-        Write-Host "[✓] Características instaladas correctamente." -ForegroundColor Green
+        Write-Host "[✓] Instalación completada exitosamente." -ForegroundColor Green
     } else {
-        Write-Host "[X] Error en la instalación." -ForegroundColor Red
+        Write-Host "[X] Error: No se pudo instalar el servicio. Ejecuta como Admin." -ForegroundColor Red
     }
 }
 
-# 2. Configuración General e Idempotencia (Opción 6 del menú)
+# 2. Configuración de Estructura e Idempotencia
 function Configurar-EntornoFTP {
-    Write-Host "[+] Configurando estructuras, grupos y seguridad..." -ForegroundColor Cyan
+    Write-Host "[+] Configurando directorios, grupos y permisos..." -ForegroundColor Cyan
     
     $ftpRoot = "C:\inetpub\ftproot"
     $basePath = "$ftpRoot\LocalUser"
 
-    # Crear directorios base (Equivalente a /srv/ftp en Linux)
+    # Crear estructura de directorios base
     $dirs = @("$basePath", "$ftpRoot\general", "$basePath\reprobados", "$basePath\recursadores", "$ftpRoot\Public")
     foreach ($dir in $dirs) {
         if (!(Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     }
 
-    # Crear Grupos Locales
+    # Gestión Automatizada de Grupos: reprobados y recursadores
     foreach ($group in @("ftp-users", "reprobados", "recursadores")) {
         if (!(Get-LocalGroup -Name $group -ErrorAction SilentlyContinue)) { 
             New-LocalGroup -Name $group | Out-Null
-            Write-Host "[✓] Grupo $group creado." -ForegroundColor Gray
         }
     }
 
-    # Configurar IIS y Aislamiento (Requerido para la estructura de carpetas personalizada)
+    # Configuración de IIS mediante WebAdministration
     Import-Module WebAdministration
     if (!(Test-Path "IIS:\Sites\Default FTP Site")) {
         New-WebFtpSite -Name "Default FTP Site" -Port 21 -PhysicalPath $ftpRoot -Force | Out-Null
     }
     
-    # Modo: IsolateUsers (Busca automáticamente en LocalUser\NombreUsuario)
+    # Configurar Aislamiento de Usuarios (Requerimiento Técnico)
     Set-WebConfigurationProperty -Filter "/system.applicationHost/sites/site[@name='Default FTP Site']/ftpServer/userIsolation" -Name "mode" -Value "IsolateUsers"
 
-    # Configurar Acceso Anónimo (Solo lectura a /Public)
+    # Acceso Anónimo: Solo lectura a la carpeta pública
     Set-WebConfigurationProperty -Filter "/system.applicationHost/sites/site[@name='Default FTP Site']/ftpServer/security/authentication/anonymousAuthentication" -Name "enabled" -Value "true"
     
-    # Permisos NTFS en 'general': Escritura para registrados, Lectura para todos
+    # Permisos NTFS: Escritura en 'general' para usuarios autenticados
     $acl = Get-Acl "$ftpRoot\general"
     $regRule = New-Object System.Security.AccessControl.FileSystemAccessRule("ftp-users","Modify", "ContainerInherit, ObjectInherit", "None", "Allow")
     $anonRule = New-Object System.Security.AccessControl.FileSystemAccessRule("Everyone","ReadAndExecute", "ContainerInherit, ObjectInherit", "None", "Allow")
@@ -55,14 +55,14 @@ function Configurar-EntornoFTP {
     $acl.SetAccessRule($anonRule)
     Set-Acl "$ftpRoot\general" $acl
 
-    # Firewall
+    # Abrir Firewall (Puertos 21 y rango pasivo 40000-40010)
     Configurar-FirewallFTP
     
-    Restart-Service ftpsvc
-    Write-Host "[✓] Entorno configurado para FileZilla." -ForegroundColor Green
+    Restart-Service ftpsvc -ErrorAction SilentlyContinue
+    Write-Host "[✓] Entorno listo para conexiones FileZilla." -ForegroundColor Green
 }
 
-# 3. Gestión de Usuarios
+# 3. Alta de Usuarios y Mapeo de Carpetas
 function Crear-UsuarioFTP {
     param($user, $pass, $group)
 
@@ -71,31 +71,35 @@ function Crear-UsuarioFTP {
         return
     }
 
-    # Crear cuenta de Windows
+    # Crear cuenta de sistema
     $securePass = ConvertTo-SecureString $pass -AsPlainText -Force
-    New-LocalUser -Name $user -Password $securePass -Description "Usuario FTP Práctica" | Out-Null
+    New-LocalUser -Name $user -Password $securePass -Description "Usuario FTP" | Out-Null
     Add-LocalGroupMember -Group "ftp-users" -Member $user
     Add-LocalGroupMember -Group $group -Member $user
 
-    # Estructura requerida por la práctica
+    # Estructura de login requerida: general, grupo y personal
     $userHome = "C:\inetpub\ftproot\LocalUser\$user"
-    New-Item -ItemType Directory -Force -Path "$userHome\$user" | Out-Null # Carpeta Personal
+    if (!(Test-Path $userHome)) { New-Item -ItemType Directory -Path $userHome -Force | Out-Null }
+    
+    # Carpeta Personal (Escritura segmentada)
+    $personalDir = "$userHome\$user"
+    New-Item -ItemType Directory -Path $personalDir -Force | Out-Null
 
-    # Montajes Simbólicos (Igual que el mount --bind de Fedora)
+    # Enlaces Simbólicos (Mismo comportamiento que mount --bind en Linux)
     cmd /c mklink /D "$userHome\general" "C:\inetpub\ftproot\general"
     cmd /c mklink /D "$userHome\$group" "C:\inetpub\ftproot\LocalUser\$group"
 
-    # Permisos en Carpeta Personal (Solo el dueño)
-    $acl = Get-Acl "$userHome\$user"
+    # Permisos NTFS en carpeta personal: Solo el propietario
+    $acl = Get-Acl $personalDir
     $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($user,"FullControl", "ContainerInherit, ObjectInherit", "None", "Allow")
     $acl.SetAccessRule($rule)
-    Set-Acl "$userHome\$user" $acl
+    Set-Acl $personalDir $acl
 
-    Write-Host "[✓] Usuario $user configurado con acceso a general, $group y personal." -ForegroundColor Green
+    Write-Host "[✓] Usuario $user creado y carpetas vinculadas." -ForegroundColor Green
 }
 
+# 4. Configuración de Seguridad de Red
 function Configurar-FirewallFTP {
-    Write-Host "[+] Abriendo puertos 21 y rango pasivo 40000-40010..." -ForegroundColor Cyan
     Enable-NetFirewallRule -DisplayGroup "Servidor FTP" -ErrorAction SilentlyContinue
     if (!(Get-NetFirewallRule -Name "FTP-Passive" -ErrorAction SilentlyContinue)) {
         New-NetFirewallRule -DisplayName "FTP Pasivo" -Name "FTP-Passive" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 40000-40010 | Out-Null
