@@ -15,44 +15,51 @@ function Configure-FTPEnvironment {
     
     Import-Module WebAdministration
 
-    # 1. Limpieza de procesos y carpetas
-    Write-Host "[*] Limpiando configuraciones previas..." -ForegroundColor Yellow
+    Write-Host "[*] Iniciando configuracion forzada..." -ForegroundColor Yellow
+
+    # 1. ELIMINACIÓN LIMPIA (Evita errores de 'Destination element already exists')
     if (Get-Website -Name $ftpSiteName -ErrorAction SilentlyContinue) { 
         Remove-WebSite -Name $ftpSiteName 
+        Write-Host "[-] Sitio anterior removido correctamente." -ForegroundColor Gray
     }
 
-    # 2. Desbloqueo de secciones (Crucial para web.config)
-    & $appcmd unlock config -section:system.ftpServer/security/authorization
-    & $appcmd unlock config -section:system.ftpServer/security/authentication
-    Start-Sleep -s 1
-
-    # 3. Crear directorios con fuerza bruta
+    # 2. FORZAR PERMISOS DE CARPETA (Soluciona 'Access is denied')
     if (!(Test-Path $basePath)) { New-Item -Path $basePath -ItemType Directory -Force | Out-Null }
-    
-    # IMPORTANTE: Tomar posesión si hay errores de acceso previo
+    # Tomar propiedad de la carpeta para el grupo Administradores
     takeown /f $basePath /r /d y > $null
     icacls $basePath /grant "Administrators:(OI)(CI)F" /t > $null
 
+    # 3. DESBLOQUEO DE CONFIGURACIÓN
+    & $appcmd unlock config -section:system.ftpServer/security/authorization
+    & $appcmd unlock config -section:system.ftpServer/security/authentication
+    Start-Sleep -s 1 # Pausa para que IIS procese el desbloqueo
+
+    # 4. CREACIÓN DE DIRECTORIOS
     foreach ($dir in @("general", "reprobados", "recursadores")) {
         $path = Join-Path $basePath $dir
         if (!(Test-Path $path)) { New-Item -Path $path -ItemType Directory -Force | Out-Null }
     }
 
-    # 4. Configurar Sitio en IIS
+    # 5. CREAR SITIO FTP (Con -Force para sobrescribir)
     New-WebFtpSite -Name $ftpSiteName -Port 21 -PhysicalPath $basePath -Force
-    Start-Sleep -s 2 # Esperar a que el sistema registre el nuevo sitio
+    Write-Host "[*] Esperando registro en IIS..." -ForegroundColor Gray
+    Start-Sleep -s 2 # CRUCIAL para evitar 'Index out of range'
 
-    # 5. Aplicar Propiedades (Aquí ya no dará error de 'Index out of range')
+    # 6. APLICAR PROPIEDADES SSL Y AUTH
     Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $true
     Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
 
-    # 6. Reglas de Autorización
-    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users="anonymous";permissions="Read"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
-    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";roles="Users";permissions="Read,Write"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
-    
-    # 7. Permisos NTFS Finales
+    # 7. REGLAS DE AUTORIZACIÓN (Solución a errores de web.config)
+    try {
+        Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users="anonymous";permissions="Read"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
+        Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";roles="Users";permissions="Read,Write"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
+    } catch {
+        Write-Host "[!] Advertencia: No se pudieron aplicar reglas de autorizacion. Verifique privilegios." -ForegroundColor Red
+    }
+
+    # 8. PERMISOS NTFS FINALES
     icacls $basePath /inheritance:r
     icacls $basePath /grant "Administrators:(OI)(CI)F"
     icacls $basePath /grant "SYSTEM:(OI)(CI)F"
@@ -60,7 +67,6 @@ function Configure-FTPEnvironment {
     
     Write-Host "[+] Entorno configurado exitosamente." -ForegroundColor Green
 }
-
 function Add-MassiveUsers {
     $n_input = Read-Host "Ingrese el numero de usuarios a crear"
     $n = 0 
