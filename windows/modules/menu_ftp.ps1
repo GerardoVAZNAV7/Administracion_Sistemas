@@ -12,7 +12,7 @@ if (Test-Path $FuncPath) {
 
 function menu-ftp {
     do {
-        Clear-Host
+       # Clear-Host
         Write-Host "=======================================" -ForegroundColor Yellow
         Write-Host "   PRACTICA 5 - ADMINISTRADOR FTP" -ForegroundColor White
         Write-Host "=======================================" -ForegroundColor Yellow
