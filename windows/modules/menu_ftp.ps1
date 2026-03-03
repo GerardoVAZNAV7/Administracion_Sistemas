@@ -2,7 +2,7 @@
 # MENÚ DE ADMINISTRACIÓN FTP - WINDOWS SERVER 2022
 # =========================================================
 
-# Importar el módulo de funciones (Asegúrate que ambos archivos estén en la misma carpeta)
+# Importar las funciones operativas (Asegura que la ruta sea correcta)
 . "$PSScriptRoot\ftp_functions.ps1"
 
 function menu-ftp {
@@ -17,7 +17,7 @@ function menu-ftp {
         Write-Host "4) Verificar estado/IP del servicio"
         Write-Host "5) PASO 1: INSTALAR ROL FTP"
         Write-Host "6) PASO 2: CONFIGURAR ENTORNO (Estructuras/ACLs)"
-        Write-Host "0) Salir"
+        Write-Host "0) Regresar al Menú Principal"
         Write-Host "---------------------------------------"
         $opcion = Read-Host "Seleccione una opcion"
 
@@ -30,83 +30,44 @@ function menu-ftp {
                     $upass = Read-Host "Password"
                     $g_op = Read-Host "Grupo (1:reprobados, 2:recursadores)"
                     $ugroup = if ($g_op -eq "1") { "reprobados" } else { "recursadores" }
-                    
-                    # Llamada a la función del módulo
                     Crear-UsuarioFTP -user $uname -pass $upass -group $ugroup
                 }
                 Pause
             }
-
             "2" {
                 $uname = Read-Host "Ingrese el nombre del usuario"
                 if (Get-LocalUser -Name $uname -ErrorAction SilentlyContinue) {
                     $g_op = Read-Host "Nuevo Grupo (1:reprobados, 2:recursadores)"
                     $newGroup = if ($g_op -eq "1") { "reprobados" } else { "recursadores" }
-                    
-                    # Lógica de cambio de grupo y actualización de enlaces
                     Remove-LocalGroupMember -Group "reprobados", "recursadores" -Member $uname -ErrorAction SilentlyContinue
                     Add-LocalGroupMember -Group $newGroup -Member $uname
-                    
                     $userHome = "C:\inetpub\ftproot\LocalUser\$uname"
                     Remove-Item "$userHome\reprobados", "$userHome\recursadores" -ErrorAction SilentlyContinue
                     cmd /c mklink /D "$userHome\$newGroup" "C:\inetpub\ftproot\LocalUser\$newGroup"
-                    
-                    Write-Host "[✓] Grupo y enlaces actualizados para $uname." -ForegroundColor Green
-                } else {
-                    Write-Host "[!] El usuario no existe." -ForegroundColor Red
-                }
+                    Write-Host "[✓] Grupo actualizado para $uname." -ForegroundColor Green
+                } else { Write-Host "[!] El usuario no existe." -ForegroundColor Red }
                 Pause
             }
-
             "3" {
-                Write-Host "`n--- [ USUARIOS REGISTRADOS EN FTP ] ---" -ForegroundColor Cyan
+                Write-Host "`n--- [ USUARIOS REGISTRADOS ] ---" -ForegroundColor Cyan
                 if (Get-LocalGroup -Name "ftp-users" -ErrorAction SilentlyContinue) {
                     Get-LocalGroupMember -Group "ftp-users" | Select-Object Name, PrincipalSource
-                } else {
-                    Write-Host "[!] El sistema no ha sido configurado (Falta grupo ftp-users)." -ForegroundColor Yellow
-                }
+                } else { Write-Host "[!] Sistema no configurado." -ForegroundColor Yellow }
                 Pause
             }
-
             "4" {
                 Write-Host "`n--- [ DIAGNÓSTICO ] ---" -ForegroundColor Cyan
                 try {
                     $svc = Get-Service ftpsvc -ErrorAction Stop
                     Write-Host "Servicio FTP: $($svc.Status)" -ForegroundColor Green
-                } catch {
-                    Write-Host "Servicio FTP: [ NO INSTALADO ]" -ForegroundColor Red
-                }
-                Write-Host "IPs para FileZilla:"
+                } catch { Write-Host "Servicio FTP: [ NO INSTALADO ]" -ForegroundColor Red }
                 Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "127*" } | Select-Object InterfaceAlias, IPAddress
                 Pause
             }
-
-            "5" { 
-                Instalar-ServicioFTP 
-                Pause 
-            }
-
-            "6" { 
-                Configurar-EntornoFTP 
-                Pause 
-            }
-
+            "5" { Instalar-ServicioFTP; Pause }
+            "6" { Configurar-EntornoFTP; Pause }
             "0" { break }
-            
-            default { 
-                Write-Host "Opción no válida." -ForegroundColor Red 
-                Pause 
-            }
+            default { Write-Host "Opción no válida." -ForegroundColor Red; Pause }
         }
     } while ($true)
-}
-
-# Verificación de Privilegios antes de lanzar el menú
-if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
-    Write-Host "ERROR: DEBES EJECUTAR ESTE SCRIPT COMO ADMINISTRADOR" -ForegroundColor Red
-    Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
-    Pause
-} else {
-    Mostrar-Menu
 }
