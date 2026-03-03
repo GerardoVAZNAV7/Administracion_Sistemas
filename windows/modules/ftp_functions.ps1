@@ -1,5 +1,5 @@
 # =====================================================
-# FUNCIONES TECNICAS PARA SERVICIO FTP (PRACTICA 5)
+# FUNCIONES TECNICAS PARA SERVICIO FTP (VERSION FINAL)
 # =====================================================
 
 function Install-FTPService {
@@ -11,13 +11,7 @@ function Install-FTPService {
 function Configure-FTPEnvironment {
     $ftpSiteName = "FTPServer_Practica"
     $basePath = "C:\inetpub\ftproot"
-    $appcmd = "$env:windir\system32\inetsrv\appcmd.exe"
     
-    # --- DESBLOQUEO GARANTIZADO DE IIS ---
-    Write-Host "[*] Desbloqueando secciones de seguridad en IIS..." -ForegroundColor Yellow
-    & $appcmd unlock config -section:system.ftpServer/security/authorization
-    & $appcmd unlock config -section:system.ftpServer/security/authentication
-
     # 1. Crear directorios base
     $dirs = @("general", "reprobados", "recursadores")
     foreach ($dir in $dirs) {
@@ -28,7 +22,7 @@ function Configure-FTPEnvironment {
     # 2. Configurar Firewall
     Set-NetFirewallRule -DisplayGroup "FTP Server" -Enabled True
 
-    # 3. Configuracion de IIS
+    # 3. Configuracion de IIS (Sitio)
     Import-Module WebAdministration
     if (!(Test-Path "IIS:\Sites\$ftpSiteName")) {
         New-WebFtpSite -Name $ftpSiteName -Port 21 -PhysicalPath $basePath
@@ -38,26 +32,26 @@ function Configure-FTPEnvironment {
         Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
     }
 
-    # 4. Autorizacion Anonima (Solo Lectura)
-    Add-WebConfiguration "/system.ftpServer/security/authorization" -value @{accessType="Allow";roles="";permissions="Read";users="anonymous"} -PSPath "IIS:\Sites\$ftpSiteName"
+    # 4. Autorizacion Anonima (bypass del error de bloqueo usando -Location)
+    # Esto escribe en el config central en lugar de un web.config local
+    Write-Host "[*] Aplicando reglas de autorizacion global..." -ForegroundColor Yellow
+    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users="anonymous";permissions="Read"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
     
-    Write-Host "[+] Entorno FTP configurado y desbloqueado exitosamente." -ForegroundColor Green
+    Write-Host "[+] Entorno FTP configurado correctamente." -ForegroundColor Green
 }
 
 function Add-MassiveUsers {
     $n_input = Read-Host "Ingrese el numero de usuarios a crear"
     
-    # --- SOLUCION AL ERROR [ref] ---
-    # Es necesario inicializar la variable antes de pasarla por referencia
+    # Inicializacion para evitar el error de [ref]
     $n = 0
     if (!([int]::TryParse($n_input, [ref]$n))) {
-        Write-Host "[!] Error: '$n_input' no es un numero. Operacion cancelada." -ForegroundColor Red
+        Write-Host "[!] Error: Debes ingresar un numero valido." -ForegroundColor Red
         return
     }
 
     $basePath = "C:\inetpub\ftproot"
 
-    # Grupos
     foreach ($grp in @("reprobados", "recursadores")) {
         if (!(Get-LocalGroup -Name $grp -ErrorAction SilentlyContinue)) { New-LocalGroup -Name $grp }
     }
@@ -65,40 +59,31 @@ function Add-MassiveUsers {
     for ($i = 1; $i -le $n; $i++) {
         Write-Host "`n--- Datos Usuario $i ---" -ForegroundColor Yellow
         $userName = Read-Host "Nombre de usuario"
+        Write-Host "[!] Nota: La clave debe tener Mayus, Minus, Numero y Simbolo (ej: P@ssword123)" -ForegroundColor Gray
         $password = Read-Host "Password" -AsSecureString
         $grupo = Read-Host "Grupo (reprobados/recursadores)"
 
-        # Crear Usuario si no existe
-        if (!(Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) {
-            New-LocalUser -Name $userName -Password $password -FullName "Estudiante $userName"
-            Add-LocalGroupMember -Group $grupo -Member $userName
+        # Crear Usuario
+        try {
+            if (!(Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) {
+                New-LocalUser -Name $userName -Password $password -FullName "Estudiante $userName"
+                Add-LocalGroupMember -Group $grupo -Member $userName
+                Write-Host "[+] Usuario $userName creado." -ForegroundColor Green
+            }
+        } catch {
+            Write-Host "[!] Error al crear $userName: Verifica que la contraseña sea compleja." -ForegroundColor Red
+            continue
         }
 
-        # Carpeta personal
+        # Carpeta y Permisos NTFS
         $userPath = Join-Path $basePath $userName
         if (!(Test-Path $userPath)) { New-Item -Path $userPath -ItemType Directory | Out-Null }
-
-        # Permisos NTFS (Críticos para FileZilla)
+        
         icacls $userPath /grant "${userName}:(OI)(CI)F" /inheritance:e
         icacls "$basePath\$grupo" /grant "${grupo}:(OI)(CI)M"
         icacls "$basePath\general" /grant "Users:(OI)(CI)M"
 
-        # Autorizacion IIS
-        Add-WebConfiguration "/system.ftpServer/security/authorization" -value @{accessType="Allow";roles="";permissions="Read,Write";users=$userName} -PSPath "IIS:\Sites\FTPServer_Practica"
-        
-        Write-Host "[+] Usuario $userName configurado." -ForegroundColor Green
+        # Autorizacion IIS con -Location para evitar bloqueos
+        Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users=$userName;permissions="Read,Write"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location "FTPServer_Practica"
     }
-}
-
-function Update-UserGroup {
-    $user = Read-Host "Usuario a mover"
-    $nuevoGrupo = Read-Host "Nuevo grupo destino (reprobados/recursadores)"
-    
-    $gruposBusqueda = @("reprobados", "recursadores")
-    foreach ($g in $gruposBusqueda) {
-        Remove-LocalGroupMember -Group $g -Member $user -ErrorAction SilentlyContinue
-    }
-    
-    Add-LocalGroupMember -Group $nuevoGrupo -Member $user
-    Write-Host "[+] Cambio de grupo exitoso para $user" -ForegroundColor Green
 }
