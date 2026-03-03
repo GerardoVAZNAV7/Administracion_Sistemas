@@ -13,82 +13,81 @@ function Configure-FTPEnvironment {
     $basePath = "C:\inetpub\ftproot"
     $appcmd = "$env:windir\system32\inetsrv\appcmd.exe"
     
-    # --- SOLUCION DEFINITIVA AL ERROR DE BLOQUEO ---
-    Write-Host "[*] Desbloqueando secciones de IIS mediante APPCMD..." -ForegroundColor Yellow
-    # Desbloqueamos las secciones a nivel global para permitir cambios locales
+    Write-Host "[*] Desbloqueando secciones y configurando seguridad..." -ForegroundColor Yellow
     & $appcmd unlock config -section:system.ftpServer/security/authorization
     & $appcmd unlock config -section:system.ftpServer/security/authentication
 
-    # 1. Crear directorios base
+    # 1. Crear directorios base y limpiar permisos heredados
     $dirs = @("general", "reprobados", "recursadores")
     foreach ($dir in $dirs) {
         $path = Join-Path $basePath $dir
         if (!(Test-Path $path)) { New-Item -Path $path -ItemType Directory | Out-Null }
     }
 
-    # 2. Firewall
-    Set-NetFirewallRule -DisplayGroup "FTP Server" -Enabled True
+    # --- CONFIGURACIÓN DE PERMISOS NTFS RAÍZ ---
+    # Permitir que los usuarios vean la raíz, pero no hereden permisos a subcarpetas ajenas
+    icacls $basePath /inheritance:r # Quitar herencia
+    icacls $basePath /grant "Administrators:(OI)(CI)F"
+    icacls $basePath /grant "SYSTEM:(OI)(CI)F"
+    icacls $basePath /grant "Users:(R)" # Solo lectura en la raíz para ver la lista
 
-    # 3. Configuracion de IIS
+    # Carpeta General: Lectura para anónimos, Escritura para logeados
+    icacls "$basePath\general" /grant "IUSR:(R)"
+    icacls "$basePath\general" /grant "Users:(OI)(CI)M"
+
+    # Carpetas de Grupo: Solo sus respectivos grupos tienen acceso
+    icacls "$basePath\reprobados" /grant "reprobados:(OI)(CI)M"
+    icacls "$basePath\recursadores" /grant "recursadores:(OI)(CI)M"
+
+    # 2. Configurar Sitio en IIS
     Import-Module WebAdministration
-    if (!(Test-Path "IIS:\Sites\$ftpSiteName")) {
-        New-WebFtpSite -Name $ftpSiteName -Port 21 -PhysicalPath $basePath
-        Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
-        Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
-        Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $true
-        Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
-    }
-
-    # 4. Autorizacion Anonima
-    # Usamos -Location para asegurar que la regla se escriba donde IIS la acepte
-    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users="anonymous";permissions="Read"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
+    if (Test-Path "IIS:\Sites\$ftpSiteName") { Remove-WebFtpSite -Name $ftpSiteName }
     
-    Write-Host "[+] Entorno FTP configurado y desbloqueado." -ForegroundColor Green
+    # IMPORTANTE: Forzamos la ruta física correcta
+    New-WebFtpSite -Name $ftpSiteName -Port 21 -PhysicalPath $basePath
+    Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
+    Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
+    Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $true
+    Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
+
+    # 3. Reglas de Autorización IIS
+    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users="anonymous";permissions="Read"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
+    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";roles="Users";permissions="Read,Write"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
+    
+    Write-Host "[+] Entorno FTP y Permisos NTFS configurados." -ForegroundColor Green
 }
 
 function Add-MassiveUsers {
     $n_input = Read-Host "Ingrese el numero de usuarios a crear"
-    
-    # --- SOLUCION AL ERROR [ref] ---
-    # Inicializamos explicitamente para que TryParse encuentre la referencia
     $n = 0 
-    if (!([int]::TryParse($n_input, [ref]$n))) {
-        Write-Host "[!] Error: '$n_input' no es un numero. Ingresa un valor numerico (ej: 3)." -ForegroundColor Red
-        return
-    }
+    if (!([int]::TryParse($n_input, [ref]$n))) { return }
 
     $basePath = "C:\inetpub\ftproot"
-
-    foreach ($grp in @("reprobados", "recursadores")) {
-        if (!(Get-LocalGroup -Name $grp -ErrorAction SilentlyContinue)) { New-LocalGroup -Name $grp }
-    }
 
     for ($i = 1; $i -le $n; $i++) {
         Write-Host "`n--- Datos Usuario $i ---" -ForegroundColor Yellow
         $userName = Read-Host "Nombre de usuario"
-        Write-Host "[!] RECUERDA: La clave debe tener Mayus, Minus, Numero y Simbolo (ej: Alumno.2026*)" -ForegroundColor Gray
         $password = Read-Host "Password" -AsSecureString
         $grupo = Read-Host "Grupo (reprobados/recursadores)"
 
-        # Crear Usuario con Try/Catch para detectar fallos de complejidad
+        # Crear Usuario y Asignar Grupo
         try {
             if (!(Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) {
-                New-LocalUser -Name $userName -Password $password -FullName "Estudiante $userName" -Description "Usuario FTP Practica 5"
+                New-LocalUser -Name $userName -Password $password -FullName "Estudiante $userName"
                 Add-LocalGroupMember -Group $grupo -Member $userName
-                Write-Host "[+] Usuario $userName creado y asignado a $grupo." -ForegroundColor Green
             }
-        } catch {
-            Write-Host "[!] ERROR: No se pudo crear el usuario. Probablemente la contraseña es muy debil." -ForegroundColor Red
-            continue 
-        }
+        } catch { continue }
 
-        # Carpetas y permisos NTFS
+        # --- CARPETA PERSONAL Y PRIVACIDAD ---
         $userPath = Join-Path $basePath $userName
         if (!(Test-Path $userPath)) { New-Item -Path $userPath -ItemType Directory | Out-Null }
-        icacls $userPath /grant "${userName}:(OI)(CI)F" /inheritance:e
         
-        # Regla de Autorizacion en IIS
-        Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users=$userName;permissions="Read,Write"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location "FTPServer_Practica"
+        # Solo el dueño tiene acceso a su carpeta (quitamos Users, dejamos al dueño)
+        icacls $userPath /inheritance:r
+        icacls $userPath /grant "Administrators:(OI)(CI)F"
+        icacls $userPath /grant "${userName}:(OI)(CI)M"
+        
+        Write-Host "[+] Usuario $userName configurado con carpeta privada." -ForegroundColor Green
     }
 }
 
