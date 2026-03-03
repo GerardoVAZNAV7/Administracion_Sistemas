@@ -17,7 +17,7 @@ function menu-ftp {
         Write-Host "1) Alta masiva de usuarios"
         Write-Host "2) Modificar grupo de usuario"
         Write-Host "3) LISTAR USUARIOS REGISTRADOS"
-        Write-Host "4) Verificar estado/IP del servicio"
+        Write-Host "4) Verificar estado del servicio"
         Write-Host "5) INSTALAR SERVICIO FTP"
         Write-Host "6) CONFIGURAR ENTORNO"
         Write-Host "0) Regresar al Menú Principal"
@@ -40,7 +40,6 @@ function menu-ftp {
                 $u = Read-Host "Usuario"
                 $g = Read-Host "Nuevo Grupo (1:reprobados, 2:recursadores)"
                 $grp = if($g -eq "1"){"reprobados"}else{"recursadores"}
-                # Lógica: Remover de ambos y agregar al nuevo
                 Remove-LocalGroupMember -Group "reprobados","recursadores" -Member $u -EA 0
                 Add-LocalGroupMember -Group $grp -Member $u -EA 0
                 Write-Host "Grupo actualizado." -ForegroundColor Green
