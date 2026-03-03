@@ -2,11 +2,9 @@
 # FUNCIONES TECNICAS PARA SERVICIO FTP
 # =====================================================
 
-function Install-FTPService {
-    Write-Host "[*] Verificando e instalando Rol Web-Server e IIS-FTPServer..." -ForegroundColor Cyan
-    Install-WindowsFeature Web-Server, Web-Mgmt-Console, Web-Ftp-Server, Web-Ftp-Service -IncludeManagementTools
-    Write-Host "[+] Instalacion completada." -ForegroundColor Green
-}
+# =====================================================
+# FUNCIONES TECNICAS PARA SERVICIO FTP REFORZADO
+# =====================================================
 
 function Configure-FTPEnvironment {
     $ftpSiteName = "FTPServer_Practica"
@@ -15,58 +13,59 @@ function Configure-FTPEnvironment {
     
     Import-Module WebAdministration
 
-    Write-Host "[*] Iniciando configuracion forzada..." -ForegroundColor Yellow
-
-    # 1. ELIMINACIÓN LIMPIA (Evita errores de 'Destination element already exists')
+    Write-Host "[*] Limpiando y preparando entorno..." -ForegroundColor Yellow
+    
+    # 1. Eliminar sitio si existe (Corrección de image_9be441.png)
     if (Get-Website -Name $ftpSiteName -ErrorAction SilentlyContinue) { 
         Remove-WebSite -Name $ftpSiteName 
-        Write-Host "[-] Sitio anterior removido correctamente." -ForegroundColor Gray
     }
 
-    # 2. FORZAR PERMISOS DE CARPETA (Soluciona 'Access is denied')
-    if (!(Test-Path $basePath)) { New-Item -Path $basePath -ItemType Directory -Force | Out-Null }
-    # Tomar propiedad de la carpeta para el grupo Administradores
+    # 2. Permisos base y Desbloqueo (Solución a image_9bd5b8.png)
+    if (!(Test-Path $basePath)) { New-Item -Path $basePath -ItemType Directory -Force }
     takeown /f $basePath /r /d y > $null
     icacls $basePath /grant "Administrators:(OI)(CI)F" /t > $null
-
-    # 3. DESBLOQUEO DE CONFIGURACIÓN
+    
     & $appcmd unlock config -section:system.ftpServer/security/authorization
     & $appcmd unlock config -section:system.ftpServer/security/authentication
-    Start-Sleep -s 1 # Pausa para que IIS procese el desbloqueo
 
-    # 4. CREACIÓN DE DIRECTORIOS
-    foreach ($dir in @("general", "reprobados", "recursadores")) {
+    # 3. Crear Estructura Base
+    $dirs = @("general", "reprobados", "recursadores")
+    foreach ($dir in $dirs) {
         $path = Join-Path $basePath $dir
         if (!(Test-Path $path)) { New-Item -Path $path -ItemType Directory -Force | Out-Null }
     }
 
-    # 5. CREAR SITIO FTP (Con -Force para sobrescribir)
+    # 4. Crear Sitio FTP
     New-WebFtpSite -Name $ftpSiteName -Port 21 -PhysicalPath $basePath -Force
-    Write-Host "[*] Esperando registro en IIS..." -ForegroundColor Gray
-    Start-Sleep -s 2 # CRUCIAL para evitar 'Index out of range'
+    Start-Sleep -s 2 # Espera necesaria para evitar 'Index out of range' (image_9b77de.png)
 
-    # 6. APLICAR PROPIEDADES SSL Y AUTH
+    # 5. Configuración de Seguridad
     Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $true
     Set-ItemProperty "IIS:\Sites\$ftpSiteName" -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
 
-    # 7. REGLAS DE AUTORIZACIÓN (Solución a errores de web.config)
-    try {
-        Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users="anonymous";permissions="Read"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
-        Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";roles="Users";permissions="Read,Write"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
-    } catch {
-        Write-Host "[!] Advertencia: No se pudieron aplicar reglas de autorizacion. Verifique privilegios." -ForegroundColor Red
-    }
+    # Reglas de Autorización IIS
+    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";users="anonymous";permissions="Read"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
+    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" -Value @{accessType="Allow";roles="Users";permissions="Read,Write"} -PSPath "MACHINE/WEBROOT/APPHOST" -Location $ftpSiteName
 
-    # 8. PERMISOS NTFS FINALES
+    # 6. Permisos NTFS Lógicos (Aquí ocurre la magia de visibilidad)
     icacls $basePath /inheritance:r
     icacls $basePath /grant "Administrators:(OI)(CI)F"
     icacls $basePath /grant "SYSTEM:(OI)(CI)F"
-    icacls $basePath /grant "Users:(R)"
-    
-    Write-Host "[+] Entorno configurado exitosamente." -ForegroundColor Green
+    icacls $basePath /grant "Users:(RX)" # Permiso para listar la raíz
+
+    # Carpeta General: Solo lectura para anónimos, Escritura para logeados
+    icacls "$basePath\general" /grant "IUSR:(RX)"
+    icacls "$basePath\general" /grant "Users:(OI)(CI)M"
+
+    # Grupos: Nadie ve nada por defecto
+    icacls "$basePath\reprobados" /remove "Users"
+    icacls "$basePath\recursadores" /remove "Users"
+
+    Write-Host "[+] Servidor base listo. Los grupos se activaran al crear usuarios." -ForegroundColor Green
 }
+
 function Add-MassiveUsers {
     $n_input = Read-Host "Ingrese el numero de usuarios a crear"
     $n = 0 
@@ -75,34 +74,54 @@ function Add-MassiveUsers {
     $basePath = "C:\inetpub\ftproot"
 
     for ($i = 1; $i -le $n; $i++) {
-        Write-Host "`n--- Datos Usuario $i ---" -ForegroundColor Yellow
         $userName = Read-Host "Nombre de usuario"
         $passwordRaw = Read-Host "Password"
         $password = $passwordRaw | ConvertTo-SecureString -AsPlainText -Force
         $grupo = Read-Host "Grupo (reprobados/recursadores)"
 
-        try {
-            if (!(Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) {
-                New-LocalUser -Name $userName -Password $password -FullName "Estudiante $userName"
-                Add-LocalGroupMember -Group "Users" -Member $userName
-                Add-LocalGroupMember -Group $grupo -Member $userName
-            }
-
-            # --- CARPETA PERSONAL ---
-            $userPath = Join-Path $basePath $userName
-            if (!(Test-Path $userPath)) { New-Item -Path $userPath -ItemType Directory -Force | Out-Null }
-            
-            icacls $userPath /inheritance:r
-            icacls $userPath /grant "Administrators:(OI)(CI)F"
-            icacls $userPath /grant "${userName}:(OI)(CI)M"
-            
-            Write-Host "[+] Usuario $userName creado y carpeta configurada." -ForegroundColor Green
-        } catch { 
-            Write-Host "[!] Error: Verifique que el grupo '$grupo' exista." -ForegroundColor Red
+        # 1. Crear usuario y grupos
+        if (!(Get-LocalGroup -Name $grupo -ErrorAction SilentlyContinue)) { New-LocalGroup -Name $grupo }
+        if (!(Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name $userName -Password $password -FullName "Estudiante $userName"
+            Add-LocalGroupMember -Group "Users" -Member $userName
+            Add-LocalGroupMember -Group $grupo -Member $userName
         }
+
+        # 2. Carpeta Personal
+        $userPath = Join-Path $basePath $userName
+        if (!(Test-Path $userPath)) { New-Item -Path $userPath -ItemType Directory -Force | Out-Null }
+        
+        # 3. Permisos Específicos para el Usuario (Visibilidad)
+        icacls $userPath /inheritance:r
+        icacls $userPath /grant "Administrators:(OI)(CI)F"
+        icacls $userPath /grant "${userName}:(OI)(CI)M"
+
+        # 4. Asegurar que el grupo tenga acceso a su carpeta compartida
+        icacls "$basePath\$grupo" /grant "${grupo}:(OI)(CI)M"
+        
+        Write-Host "[+] $userName configurado. Vera: general, $grupo y $userName." -ForegroundColor Green
     }
 }
 
+function Update-UserGroup {
+    $user = Read-Host "Usuario a mover"
+    $nuevoGrupo = Read-Host "Nuevo grupo destino (reprobados/recursadores)"
+    $basePath = "C:\inetpub\ftproot"
+
+    # Eliminar de grupos viejos
+    @("reprobados", "recursadores") | ForEach-Object {
+        Remove-LocalGroupMember -Group $_ -Member $user -ErrorAction SilentlyContinue
+    }
+    
+    # Agregar al nuevo
+    if (!(Get-LocalGroup -Name $nuevoGrupo -ErrorAction SilentlyContinue)) { New-LocalGroup -Name $nuevoGrupo }
+    Add-LocalGroupMember -Group $nuevoGrupo -Member $user
+
+    # Refrescar permisos de la carpeta de grupo
+    icacls "$basePath\$nuevoGrupo" /grant "${nuevoGrupo}:(OI)(CI)M"
+
+    Write-Host "[+] Cambio completado. FileZilla actualizara la carpeta de grupo al reconectar." -ForegroundColor Green
+}
 function Update-UserGroup {
     $user = Read-Host "Usuario a mover"
     $nuevoGrupo = Read-Host "Nuevo grupo destino (reprobados/recursadores)"
