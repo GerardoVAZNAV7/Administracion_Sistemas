@@ -4,17 +4,16 @@
 # =====================================================
 
 # Referencia absoluta a la carpeta de módulos
+# Carga con ruta absoluta para evitar errores de ubicación
 $ModulePath = Join-Path $PSScriptRoot "modules"
+$scripts = @("core_utils.ps1", "menu_dhcp.ps1", "menu_dns.ps1", "menu_ssh.ps1", "menu_ftp.ps1")
 
-# ===== CARGA DE MODULOS DE FORMA SEGURA =====
-$modulos = @("core_utils.ps1", "menu_dhcp.ps1", "menu_dns.ps1", "menu_ssh.ps1", "menu_ftp.ps1")
-
-foreach ($mod in $modulos) {
-    $fullPath = Join-Path $ModulePath $mod
+foreach ($script in $scripts) {
+    $fullPath = Join-Path $ModulePath $script
     if (Test-Path $fullPath) {
         . $fullPath
     } else {
-        Write-Host "[!] Error crítico: No se encontró $fullPath" -ForegroundColor Red
+        Write-Host "[!] Error: No se encontró $fullPath" -ForegroundColor Red
     }
 }
 

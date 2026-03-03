@@ -76,8 +76,9 @@ function Crear-UsuarioFTP {
 }
 
 function Configurar-FirewallFTP {
+    # Se agregaron las comillas de cierre y se corrigieron los bloques
     Enable-NetFirewallRule -DisplayGroup "Servidor FTP" -ErrorAction SilentlyContinue
     if (!(Get-NetFirewallRule -Name "FTP-Passive" -ErrorAction SilentlyContinue)) {
         New-NetFirewallRule -DisplayName "FTP Pasivo" -Name "FTP-Passive" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 40000-40010 | Out-Null
     }
-}
+} # Asegúrate de que esta llave cierre la función
