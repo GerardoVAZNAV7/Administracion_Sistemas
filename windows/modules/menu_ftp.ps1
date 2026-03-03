@@ -2,14 +2,19 @@
 # MENÚ DE ADMINISTRACIÓN FTP - WINDOWS SERVER 2022
 # =========================================================
 
-# Importar las funciones operativas (Asegura que la ruta sea correcta)
-. "$PSScriptRoot\ftp_functions.ps1"
+# Forzar la carga de funciones usando una ruta relativa al script actual
+$FuncPath = Join-Path $PSScriptRoot "ftp_functions.ps1"
+if (Test-Path $FuncPath) {
+    . $FuncPath
+} else {
+    Write-Error "No se encontro el archivo de funciones en: $FuncPath"
+}
 
 function menu-ftp {
     do {
         Clear-Host
         Write-Host "=======================================" -ForegroundColor Yellow
-        Write-Host "   ADMINISTRADOR FTP - WINDOWS SERVER" -ForegroundColor White
+        Write-Host "   PRACTICA 5 - ADMINISTRADOR FTP" -ForegroundColor White
         Write-Host "=======================================" -ForegroundColor Yellow
         Write-Host "1) Alta masiva de usuarios"
         Write-Host "2) Modificar grupo de usuario"
@@ -66,7 +71,7 @@ function menu-ftp {
             }
             "5" { Instalar-ServicioFTP; Pause }
             "6" { Configurar-EntornoFTP; Pause }
-            "0" { break }
+            "0" { return } # Cambiado break por return para salir limpiamente al orquestador
             default { Write-Host "Opción no válida." -ForegroundColor Red; Pause }
         }
     } while ($true)
