@@ -44,7 +44,7 @@ function Menu-Diagnostico {
 # =====================================================
 
 do {
-    Clear-Host
+    #Clear-Host
 
     Write-Section "ADMINISTRACION CENTRAL DE SERVIDORES"
 
