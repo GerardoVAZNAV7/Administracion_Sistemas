@@ -2,7 +2,7 @@
 # MENÚ DE ADMINISTRACIÓN FTP - PRACTICA 5
 # =========================================================
 
-# Cargar las funciones desde la misma carpeta modules
+# Cargar las funciones usando la ruta absoluta del módulo
 $FuncPath = Join-Path $PSScriptRoot "ftp_functions.ps1"
 if (Test-Path $FuncPath) {
     . $FuncPath
@@ -30,7 +30,9 @@ function menu-ftp {
                 for ($i=1; $i -le $num; $i++) {
                     $u = Read-Host "User $i"; $p = Read-Host "Pass"; $g = Read-Host "Grupo (1:reprobados, 2:recursadores)"
                     $grp = if($g -eq "1"){"reprobados"}else{"recursadores"}
-                    Crear-UsuarioFTP -user $u -pass $p -group $grp
+                    if(Get-Command Crear-UsuarioFTP -EA 0){
+                        Crear-UsuarioFTP -user $u -pass $p -group $grp
+                    }
                 }
                 Pause 
             }
@@ -38,7 +40,10 @@ function menu-ftp {
                 $u = Read-Host "Usuario"
                 $g = Read-Host "Nuevo Grupo (1:reprobados, 2:recursadores)"
                 $grp = if($g -eq "1"){"reprobados"}else{"recursadores"}
-                # Lógica de cambio de grupo (asumiendo que está en ftp_functions)
+                # Lógica: Remover de ambos y agregar al nuevo
+                Remove-LocalGroupMember -Group "reprobados","recursadores" -Member $u -EA 0
+                Add-LocalGroupMember -Group $grp -Member $u -EA 0
+                Write-Host "Grupo actualizado." -ForegroundColor Green
                 Pause
             }
             "3" {
@@ -47,12 +52,16 @@ function menu-ftp {
                 Pause
             }
             "4" {
-                Get-Service ftpsvc -ErrorAction SilentlyContinue | Select Name, Status
-                Get-NetIPAddress -AddressFamily IPv4 | Where InterfaceAlias -NotLike "*Loopback*" | Select IPAddress
+                $svc = Get-Service ftpsvc -ErrorAction SilentlyContinue
+                if($svc){ 
+                    Write-Host "Servicio: $($svc.Name) [$($svc.Status)]" -ForegroundColor Green 
+                } else {
+                    Write-Host "[!] Servicio FTP (ftpsvc) no encontrado." -ForegroundColor Red
+                }
                 Pause
             }
-            "5" { if(Get-Command Instalar-ServicioFTP){Instalar-ServicioFTP}else{Write-Host "Función no encontrada"}; Pause }
-            "6" { if(Get-Command Configurar-EntornoFTP){Configurar-EntornoFTP}else{Write-Host "Función no encontrada"}; Pause }
+            "5" { if(Get-Command Instalar-ServicioFTP -EA 0){Instalar-ServicioFTP}else{Write-Host "Error: Funcion no cargada"}; Pause }
+            "6" { if(Get-Command Configurar-EntornoFTP -EA 0){Configurar-EntornoFTP}else{Write-Host "Error: Funcion no cargada"}; Pause }
             "0" { return }
         }
     } while ($true)
