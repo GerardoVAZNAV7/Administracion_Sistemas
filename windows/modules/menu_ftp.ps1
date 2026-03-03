@@ -2,12 +2,12 @@
 # MENÚ DE ADMINISTRACIÓN FTP - WINDOWS SERVER 2022
 # =========================================================
 
-# Forzar la carga de funciones usando una ruta relativa al script actual
+# Forzar la carga de funciones usando la ruta del script
 $FuncPath = Join-Path $PSScriptRoot "ftp_functions.ps1"
 if (Test-Path $FuncPath) {
     . $FuncPath
 } else {
-    Write-Error "No se encontro el archivo de funciones en: $FuncPath"
+    Write-Host "[!] Error: No se encontro ftp_functions.ps1 en $FuncPath" -ForegroundColor Red
 }
 
 function menu-ftp {
@@ -24,9 +24,9 @@ function menu-ftp {
         Write-Host "6) PASO 2: CONFIGURAR ENTORNO (Estructuras/ACLs)"
         Write-Host "0) Regresar al Menú Principal"
         Write-Host "---------------------------------------"
-        $opcion = Read-Host "Seleccione una opcion"
+        $opcionFTP = Read-Host "Seleccione una opcion"
 
-        switch ($opcion) {
+        switch ($opcionFTP) {
             "1" {
                 $n = Read-Host "Número de usuarios a crear"
                 for ($i=1; $i -le $n; $i++) {
@@ -50,14 +50,18 @@ function menu-ftp {
                     Remove-Item "$userHome\reprobados", "$userHome\recursadores" -ErrorAction SilentlyContinue
                     cmd /c mklink /D "$userHome\$newGroup" "C:\inetpub\ftproot\LocalUser\$newGroup"
                     Write-Host "[✓] Grupo actualizado para $uname." -ForegroundColor Green
-                } else { Write-Host "[!] El usuario no existe." -ForegroundColor Red }
+                } else { 
+                    Write-Host "[!] El usuario no existe." -ForegroundColor Red 
+                }
                 Pause
             }
             "3" {
                 Write-Host "`n--- [ USUARIOS REGISTRADOS ] ---" -ForegroundColor Cyan
                 if (Get-LocalGroup -Name "ftp-users" -ErrorAction SilentlyContinue) {
                     Get-LocalGroupMember -Group "ftp-users" | Select-Object Name, PrincipalSource
-                } else { Write-Host "[!] Sistema no configurado." -ForegroundColor Yellow }
+                } else { 
+                    Write-Host "[!] Sistema no configurado." -ForegroundColor Yellow 
+                }
                 Pause
             }
             "4" {
@@ -65,14 +69,19 @@ function menu-ftp {
                 try {
                     $svc = Get-Service ftpsvc -ErrorAction Stop
                     Write-Host "Servicio FTP: $($svc.Status)" -ForegroundColor Green
-                } catch { Write-Host "Servicio FTP: [ NO INSTALADO ]" -ForegroundColor Red }
+                } catch { 
+                    Write-Host "Servicio FTP: [ NO INSTALADO ]" -ForegroundColor Red 
+                }
                 Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notlike "127*" } | Select-Object InterfaceAlias, IPAddress
                 Pause
             }
             "5" { Instalar-ServicioFTP; Pause }
             "6" { Configurar-EntornoFTP; Pause }
-            "0" { return } # Cambiado break por return para salir limpiamente al orquestador
-            default { Write-Host "Opción no válida." -ForegroundColor Red; Pause }
+            "0" { return }
+            default { 
+                Write-Host "Opción no válida." -ForegroundColor Red
+                Pause 
+            }
         }
     } while ($true)
 }
