@@ -1,3 +1,11 @@
+# Validar privilegios de Administrador
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "ERROR: Debes ejecutar PowerShell como ADMINISTRADOR." -ForegroundColor Red
+    Pause
+    exit
+}
+
 # Cargar funciones tecnicas
 $FuncPath = Join-Path $PSScriptRoot "ftp_functions.ps1"
 if (Test-Path $FuncPath) { . $FuncPath }
@@ -9,11 +17,11 @@ function menu-ftp {
         Write-Host "   PRACTICA 5: AUTOMATIZACION FTP" -ForegroundColor White
         Write-Host "=======================================" -ForegroundColor Cyan
         Write-Host "1) Instalar Servicio FTP (IIS)"
-        Write-Host "2) Configurar Servicio y Firewall"
+        Write-Host "2) Configurar Servicio y Carpetas"
         Write-Host "3) Alta Masiva de Usuarios"
         Write-Host "4) Ver Usuarios del Sistema"
         Write-Host "5) Cambiar Usuario de Grupo"
-        Write-Host "0) Volver al Menu Principal"
+        Write-Host "0) Salir"
         Write-Host ""
 
         $opcionFtp = Read-Host "Seleccione una opcion"
@@ -33,3 +41,4 @@ function menu-ftp {
         }
     } while ($opcionFtp -ne "0")
 }
+
