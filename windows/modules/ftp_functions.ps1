@@ -1,43 +1,108 @@
 # =============================================================================
-# ftp_functions.ps1 - Funciones del Servidor FTP para Windows Server 2022
-# Equivalente a ftp_functions.sh (Fedora/vsftpd) => Windows Server / IIS FTP
-# =============================================================================
-# NOTA: Este archivo debe ser dot-sourced por menu_ftp.ps1.
-# Las variables $FTP_* son globales para que todas las funciones las compartan
-# incluso al ser llamadas desde otro script (main.ps1 -> menu_ftp.ps1 -> aquí).
+# ftp_functions.ps1 - TODAS las funciones del Servidor FTP
+# Windows Server 2022 / IIS FTP
+# Todas las funciones son global: para que estén disponibles desde cualquier
+# script que haga dot-source de este archivo (main.ps1 -> menu_ftp.ps1 -> aquí)
 # =============================================================================
 
-# Rutas globales del servicio FTP
-$global:FTP_ROOT       = "C:\inetpub\ftproot"
-$global:FTP_GENERAL    = "$global:FTP_ROOT\general"
-$global:FTP_GROUPS     = "$global:FTP_ROOT\groups"
-$global:FTP_USERS_DIR  = "$global:FTP_ROOT\users"
-$global:FTP_ANON_DIR   = "$global:FTP_ROOT\anonymous"
-$global:FTP_SITE_NAME  = "ServicioFTP"
-$global:FTP_PORT       = 21
+$global:FTP_ROOT      = "C:\inetpub\ftproot"
+$global:FTP_GENERAL   = "$global:FTP_ROOT\general"
+$global:FTP_GROUPS    = "$global:FTP_ROOT\groups"
+$global:FTP_USERS_DIR = "$global:FTP_ROOT\users"
+$global:FTP_ANON_DIR  = "$global:FTP_ROOT\anonymous"
+$global:FTP_SITE_NAME = "ServicioFTP"
+$global:FTP_PORT      = 21
 
-# ============================================================
-# FUNCIÓN: Inicializar-SistemaFTP
-# Equivalente a: inicializar_sistema()
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# Instalar-ServicioFTP
+# Instala los roles IIS + FTP en Windows Server 2022
+# ─────────────────────────────────────────────────────────────
+function global:Instalar-ServicioFTP {
+    Write-Host "`n[+] Instalando rol de Servidor FTP en Windows Server 2022..." -ForegroundColor Cyan
+
+    $esAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+                 [Security.Principal.WindowsBuiltInRole]"Administrator")
+    if (!$esAdmin) {
+        Write-Host "[ERROR] Ejecuta PowerShell como Administrador." -ForegroundColor Red
+        return
+    }
+
+    $features = @(
+        @{Name="Web-Server";       Desc="IIS (Servidor Web base)"},
+        @{Name="Web-Ftp-Server";   Desc="Servidor FTP"},
+        @{Name="Web-Ftp-Service";  Desc="Servicio FTP"},
+        @{Name="Web-Mgmt-Console"; Desc="Consola de administracion IIS"}
+    )
+
+    $reinicioRequerido = $false
+    foreach ($f in $features) {
+        $feat = Get-WindowsFeature -Name $f.Name -ErrorAction SilentlyContinue
+        if ($feat -and $feat.InstallState -eq "Installed") {
+            Write-Host "  [✓] Ya instalado:  $($f.Desc)" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  [~] Instalando:    $($f.Desc)..." -ForegroundColor Yellow
+            $result = Install-WindowsFeature -Name $f.Name -IncludeManagementTools
+            if ($result.Success) {
+                Write-Host "  [✓] Instalado:     $($f.Desc)" -ForegroundColor Green
+                if ($result.RestartNeeded -eq "Yes") { $reinicioRequerido = $true }
+            } else {
+                Write-Host "  [!] FALLO:         $($f.Desc)" -ForegroundColor Red
+            }
+        }
+    }
+
+    # Arrancar servicio
+    $svc = Get-Service -Name "ftpsvc" -ErrorAction SilentlyContinue
+    if ($svc) {
+        Set-Service -Name "ftpsvc" -StartupType Automatic
+        if ($svc.Status -ne "Running") {
+            Start-Service -Name "ftpsvc"
+            Write-Host "  [✓] Servicio ftpsvc iniciado." -ForegroundColor Green
+        } else {
+            Write-Host "  [✓] Servicio ftpsvc ya en ejecucion." -ForegroundColor Green
+        }
+    } else {
+        Write-Host "  [!] ftpsvc no encontrado aun (puede requerir reinicio)." -ForegroundColor Yellow
+    }
+
+    # Cargar módulo WebAdministration
+    Import-Module WebAdministration -ErrorAction SilentlyContinue
+    if (Get-Module -Name WebAdministration) {
+        Write-Host "  [✓] Modulo WebAdministration cargado." -ForegroundColor Green
+    } else {
+        Write-Host "  [!] WebAdministration no disponible aun." -ForegroundColor Yellow
+    }
+
+    if ($reinicioRequerido) {
+        Write-Host "`n[!] Se requiere REINICIAR para completar la instalacion." -ForegroundColor Yellow
+        $resp = Read-Host "Reiniciar ahora? (s/n)"
+        if ($resp -eq "s") { Restart-Computer -Force }
+    } else {
+        Write-Host "`n[✓] Instalacion completada. Usa la opcion 6 del menu FTP para inicializar." -ForegroundColor Green
+    }
+}
+
+# ─────────────────────────────────────────────────────────────
+# Inicializar-SistemaFTP
+# Crea carpetas, grupos, junctions, sitio IIS y firewall
+# ─────────────────────────────────────────────────────────────
 function global:Inicializar-SistemaFTP {
-    Write-Host "`n[+] Inicializando sistema FTP en Windows Server 2022..." -ForegroundColor Cyan
+    Write-Host "`n[+] Inicializando sistema FTP..." -ForegroundColor Cyan
 
-    # 1. Verificar que IIS FTP esté instalado
+    # Verificar rol instalado
     $ftpFeature = Get-WindowsFeature -Name "Web-Ftp-Server" -ErrorAction SilentlyContinue
     if (!$ftpFeature -or $ftpFeature.InstallState -ne "Installed") {
-        Write-Host "[!] El rol IIS-FTP no está instalado. Usa la opción 1 del menú para instalarlo primero." -ForegroundColor Red
+        Write-Host "[!] Rol IIS-FTP no instalado. Usa la opcion 1 del menu primero." -ForegroundColor Red
         return
     }
 
-    # 2. Importar módulo WebAdministration
     Import-Module WebAdministration -ErrorAction SilentlyContinue
     if (!(Get-Module -Name WebAdministration)) {
-        Write-Host "[!] No se pudo cargar WebAdministration. Verifica que IIS esté instalado." -ForegroundColor Red
+        Write-Host "[!] No se pudo cargar WebAdministration." -ForegroundColor Red
         return
     }
 
-    # 3. Crear estructura de directorios
+    # Crear estructura de directorios
     $dirs = @(
         $global:FTP_ROOT,
         $global:FTP_GENERAL,
@@ -54,7 +119,7 @@ function global:Inicializar-SistemaFTP {
         }
     }
 
-    # 4. Crear grupos locales
+    # Crear grupos locales
     foreach ($grp in @("reprobados","recursadores","ftp-users")) {
         if (!(Get-LocalGroup -Name $grp -ErrorAction SilentlyContinue)) {
             New-LocalGroup -Name $grp -Description "Grupo FTP: $grp" | Out-Null
@@ -62,10 +127,10 @@ function global:Inicializar-SistemaFTP {
         }
     }
 
-    # 5. Permisos sobre \general (ftp-users -> Modificar/RW)
+    # Permisos carpeta general (ftp-users RW)
     Set-PermisosDirectorio -Path $global:FTP_GENERAL -Group "ftp-users" -Rights "Modify" -Inherit $true
 
-    # 6. Junction: \anonymous\general -> \general (solo lectura anónimo)
+    # Junction anónima: \anonymous\general -> \general (solo lectura)
     $junctionTarget = "$global:FTP_ANON_DIR\general"
     if (Test-Path $junctionTarget) {
         $item = Get-Item $junctionTarget -Force
@@ -78,82 +143,73 @@ function global:Inicializar-SistemaFTP {
     }
     Write-Host "    Junction anon: $junctionTarget => $global:FTP_GENERAL" -ForegroundColor DarkGray
 
-    # 7. Crear / reconfigurar sitio FTP en IIS
     Configurar-SitioIISFTP
-
-    # 8. Reglas de Firewall
     Configurar-FirewallFTP
 
-    # 9. Arrancar servicio
     Start-Service -Name "ftpsvc" -ErrorAction SilentlyContinue
     Set-Service   -Name "ftpsvc" -StartupType Automatic
 
     Write-Host "[✓] Sistema FTP inicializado correctamente." -ForegroundColor Green
 }
 
-# ============================================================
-# FUNCIÓN: Configurar-SitioIISFTP  (interna)
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# Configurar-SitioIISFTP  (llamada desde Inicializar-SistemaFTP)
+# ─────────────────────────────────────────────────────────────
 function global:Configurar-SitioIISFTP {
     Import-Module WebAdministration -ErrorAction SilentlyContinue
 
-    # Eliminar sitio previo para reconfigurar limpiamente
     if (Get-WebSite -Name $global:FTP_SITE_NAME -ErrorAction SilentlyContinue) {
         Remove-WebSite -Name $global:FTP_SITE_NAME
     }
 
-    # Crear nuevo sitio FTP apuntando a la raíz
     New-WebFtpSite -Name $global:FTP_SITE_NAME -Port $global:FTP_PORT `
                    -PhysicalPath $global:FTP_ROOT -Force | Out-Null
 
-    # Autenticación: básica (usuarios locales) + anónima
+    # Autenticación básica + anónima
     Set-ItemProperty "IIS:\Sites\$global:FTP_SITE_NAME" `
         -Name ftpServer.security.authentication.basicAuthentication.enabled -Value $true
     Set-ItemProperty "IIS:\Sites\$global:FTP_SITE_NAME" `
         -Name ftpServer.security.authentication.anonymousAuthentication.enabled -Value $true
 
-    # Puertos pasivos 40000-40010
+    # Puertos pasivos
     Set-WebConfigurationProperty -Filter "system.ftpServer/firewallSupport" -PSPath "IIS:\" `
         -Name "lowDataChannelPort"  -Value 40000
     Set-WebConfigurationProperty -Filter "system.ftpServer/firewallSupport" -PSPath "IIS:\" `
         -Name "highDataChannelPort" -Value 40010
 
-    # SSL desactivado (modo Allow = opcional, no requerido)
+    # SSL opcional
     Set-ItemProperty "IIS:\Sites\$global:FTP_SITE_NAME" `
         -Name ftpServer.security.ssl.controlChannelPolicy -Value "SslAllow"
     Set-ItemProperty "IIS:\Sites\$global:FTP_SITE_NAME" `
-        -Name ftpServer.security.ssl.dataChannelPolicy -Value "SslAllow"
+        -Name ftpServer.security.ssl.dataChannelPolicy    -Value "SslAllow"
 
-    # Aislamiento de usuarios: cada usuario autenticado cae en
-    # \users\<usuario>\LocalUser\<usuario>\  (IIS FTP User Isolation)
-    # El anónimo cae en \anonymous\
+    # Aislamiento de usuarios por directorio
     Set-WebConfigurationProperty `
         -Filter "system.applicationHost/sites/site[@name='$global:FTP_SITE_NAME']/ftpServer/userIsolation" `
         -PSPath "IIS:\" -Name "mode" -Value "IsolateAllDirectories"
 
-    # Regla de autorización: anónimo solo lectura
+    # Autorización: anónimo = solo lectura
     Add-WebConfigurationProperty `
         -Filter "system.ftpServer/security/authorization" `
         -PSPath "IIS:\Sites\$global:FTP_SITE_NAME" -Name "." `
         -Value @{accessType="Allow"; users="?"; permissions="Read"} `
         -ErrorAction SilentlyContinue
 
-    # Regla de autorización: ftp-users lectura + escritura
+    # Autorización: ftp-users = lectura + escritura
     Add-WebConfigurationProperty `
         -Filter "system.ftpServer/security/authorization" `
         -PSPath "IIS:\Sites\$global:FTP_SITE_NAME" -Name "." `
         -Value @{accessType="Allow"; roles="ftp-users"; permissions="Read,Write"} `
         -ErrorAction SilentlyContinue
 
-    Write-Host "    Sitio IIS-FTP '$global:FTP_SITE_NAME' configurado en puerto $global:FTP_PORT." -ForegroundColor DarkGray
+    Write-Host "    Sitio IIS-FTP '$global:FTP_SITE_NAME' configurado (puerto $global:FTP_PORT)." -ForegroundColor DarkGray
 }
 
-# ============================================================
-# FUNCIÓN: Configurar-FirewallFTP
-# Equivalente a: configurar_seguridad_ftp()
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# Configurar-FirewallFTP
+# ─────────────────────────────────────────────────────────────
 function global:Configurar-FirewallFTP {
-    Write-Host "[+] Configurando reglas de Firewall..." -ForegroundColor Cyan
+    Write-Host "[+] Configurando Firewall..." -ForegroundColor Cyan
     $rules = @(
         @{Name="FTP-Control"; Protocol="TCP"; Port="21"},
         @{Name="FTP-Pasivo";  Protocol="TCP"; Port="40000-40010"}
@@ -162,7 +218,7 @@ function global:Configurar-FirewallFTP {
         if (!(Get-NetFirewallRule -DisplayName $r.Name -ErrorAction SilentlyContinue)) {
             New-NetFirewallRule -DisplayName $r.Name -Direction Inbound `
                 -Protocol $r.Protocol -LocalPort $r.Port -Action Allow | Out-Null
-            Write-Host "    Regla creada: $($r.Name) (puerto $($r.Port))" -ForegroundColor DarkGray
+            Write-Host "    Regla creada: $($r.Name) ($($r.Port))" -ForegroundColor DarkGray
         } else {
             Write-Host "    Regla ya existe: $($r.Name)" -ForegroundColor DarkGray
         }
@@ -170,10 +226,9 @@ function global:Configurar-FirewallFTP {
     Write-Host "[✓] Firewall configurado." -ForegroundColor Green
 }
 
-# ============================================================
-# FUNCIÓN: Crear-UsuarioFTP
-# Equivalente a: crear_usuario()
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# Crear-UsuarioFTP
+# ─────────────────────────────────────────────────────────────
 function global:Crear-UsuarioFTP {
     param(
         [Parameter(Mandatory)][string]$Usuario,
@@ -194,29 +249,25 @@ function global:Crear-UsuarioFTP {
     Add-LocalGroupMember -Group "ftp-users" -Member $Usuario -ErrorAction SilentlyContinue
     Add-LocalGroupMember -Group $Grupo      -Member $Usuario -ErrorAction SilentlyContinue
 
-    # Denegar inicio de sesión interactivo (equivalente a nologin)
     Deny-InteractiveLogon -Usuario $Usuario
-
-    # Crear estructura de carpetas FTP del usuario
     Configurar-EstructuraUsuario -Usuario $Usuario -Grupo $Grupo
 
     Write-Host "[✓] Usuario '$Usuario' creado en grupo '$Grupo'." -ForegroundColor Green
 }
 
-# ============================================================
-# FUNCIÓN: Configurar-EstructuraUsuario  (interna)
-# Estructura bajo \users\<usuario>\LocalUser\<usuario>\:
-#   general\    -> Junction a \general\         (RW, compartida todos)
-#   <grupo>\    -> Junction a \groups\<grupo>\  (RW, compartida grupo)
-#   <usuario>\  -> Carpeta personal exclusiva
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# Configurar-EstructuraUsuario  (llamada desde Crear y Modificar)
+# Estructura IIS User Isolation: \users\<u>\LocalUser\<u>\
+#   general\   -> Junction a \general\        (RW todos)
+#   <grupo>\   -> Junction a \groups\<grupo>\ (RW grupo)
+#   <usuario>\ -> Carpeta personal exclusiva
+# ─────────────────────────────────────────────────────────────
 function global:Configurar-EstructuraUsuario {
     param(
         [string]$Usuario,
         [string]$Grupo
     )
 
-    # IIS FTP User Isolation requiere la ruta: <raiz>\LocalUser\<nombre>\
     $userLocal   = "$global:FTP_USERS_DIR\$Usuario\LocalUser\$Usuario"
     $genLink     = "$userLocal\general"
     $groupLink   = "$userLocal\$Grupo"
@@ -224,7 +275,7 @@ function global:Configurar-EstructuraUsuario {
 
     New-Item -ItemType Directory -Path $userLocal -Force | Out-Null
 
-    # Junction: general (compartida con todos)
+    # Junction: carpeta general compartida
     if (!(Test-Path $genLink)) {
         cmd /c "mklink /J `"$genLink`" `"$global:FTP_GENERAL`"" | Out-Null
     }
@@ -236,32 +287,34 @@ function global:Configurar-EstructuraUsuario {
         cmd /c "mklink /J `"$groupLink`" `"$groupSrc`"" | Out-Null
     }
 
-    # Carpeta personal: solo el dueño tiene control total
+    # Carpeta personal: solo el dueño + Administradores
     if (!(Test-Path $personalDir)) {
         New-Item -ItemType Directory -Path $personalDir -Force | Out-Null
     }
     $acl = Get-Acl $personalDir
-    $acl.SetAccessRuleProtection($true, $false)  # deshabilitar herencia
-    $ownerAccount = New-Object System.Security.Principal.NTAccount($env:COMPUTERNAME, $Usuario)
-    $ruleOwner = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        $ownerAccount, "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
-    $acl.AddAccessRule($ruleOwner)
-    # Admins también necesitan acceso para administrar
-    $ruleAdmin = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "BUILTIN\Administrators", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
-    $acl.AddAccessRule($ruleAdmin)
+    $acl.SetAccessRuleProtection($true, $false)
+    foreach ($entry in @(
+        @{Account="$env:COMPUTERNAME\$Usuario"; Rights="FullControl"},
+        @{Account="BUILTIN\Administrators";     Rights="FullControl"}
+    )) {
+        try {
+            $acctObj = New-Object System.Security.Principal.NTAccount($entry.Account)
+            $rule    = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                           $acctObj, $entry.Rights, "ContainerInherit,ObjectInherit", "None", "Allow")
+            $acl.AddAccessRule($rule)
+        } catch { }
+    }
     Set-Acl -Path $personalDir -AclObject $acl
 
-    # Permisos de grupo sobre la carpeta de grupo
+    # Permisos de escritura en carpeta de grupo
     Set-PermisosDirectorio -Path $groupSrc -Group $Grupo -Rights "Modify" -Inherit $true
 
-    Write-Host "    Estructura creada para '$Usuario': general/, $Grupo/, $Usuario/" -ForegroundColor DarkGray
+    Write-Host "    Estructura lista para '$Usuario': general\ | $Grupo\ | $Usuario\" -ForegroundColor DarkGray
 }
 
-# ============================================================
-# FUNCIÓN: Modificar-GrupoUsuarioFTP
-# Equivalente a: modificar_grupo_usuario()
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# Modificar-GrupoUsuarioFTP
+# ─────────────────────────────────────────────────────────────
 function global:Modificar-GrupoUsuarioFTP {
     param(
         [Parameter(Mandatory)][string]$Usuario,
@@ -273,14 +326,12 @@ function global:Modificar-GrupoUsuarioFTP {
         return
     }
 
-    # Quitar de grupos académicos anteriores
     foreach ($g in @("reprobados","recursadores")) {
         Remove-LocalGroupMember -Group $g -Member $Usuario -ErrorAction SilentlyContinue
     }
-
     Add-LocalGroupMember -Group $NuevoGrupo -Member $Usuario -ErrorAction SilentlyContinue
 
-    # Eliminar junction de grupo anterior (sin borrar contenido real)
+    # Eliminar junction del grupo anterior sin borrar contenido real
     $userLocal = "$global:FTP_USERS_DIR\$Usuario\LocalUser\$Usuario"
     foreach ($g in @("reprobados","recursadores")) {
         $linkPath = "$userLocal\$g"
@@ -289,82 +340,71 @@ function global:Modificar-GrupoUsuarioFTP {
         }
     }
 
-    # Reconfigurar con el nuevo grupo
     Configurar-EstructuraUsuario -Usuario $Usuario -Grupo $NuevoGrupo
-
-    Write-Host "[✓] Usuario '$Usuario' movido a grupo '$NuevoGrupo'." -ForegroundColor Green
+    Write-Host "[✓] Usuario '$Usuario' movido al grupo '$NuevoGrupo'." -ForegroundColor Green
 }
 
-# ============================================================
-# FUNCIÓN: Verificar-ServicioFTP
-# Equivalente a: verificar_servicio_ftp()
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# Verificar-ServicioFTP
+# ─────────────────────────────────────────────────────────────
 function global:Verificar-ServicioFTP {
     Write-Host "`n--- [ DIAGNOSTICO DEL SERVICIO FTP ] ---" -ForegroundColor Cyan
 
-    # Estado del servicio
+    # Servicio
     $svc = Get-Service -Name "ftpsvc" -ErrorAction SilentlyContinue
-    Write-Host "Estado servicio: " -NoNewline
-    if ($svc -and $svc.Status -eq "Running") {
-        Write-Host "[ EN EJECUCION ]" -ForegroundColor Green
-    } elseif ($svc) {
-        Write-Host "[ DETENIDO ]" -ForegroundColor Red
-    } else {
-        Write-Host "[ NO INSTALADO ]" -ForegroundColor Red
-    }
+    Write-Host "Servicio ftpsvc: " -NoNewline
+    if      ($svc -and $svc.Status -eq "Running") { Write-Host "[ EN EJECUCION ]" -ForegroundColor Green  }
+    elseif  ($svc)                                { Write-Host "[ DETENIDO ]"     -ForegroundColor Red    }
+    else                                          { Write-Host "[ NO INSTALADO ]" -ForegroundColor Red    }
 
-    # Puertos escuchando
+    # Puertos
     Write-Host "Puertos FTP:     " -NoNewline
     $listening = netstat -ano 2>$null | Select-String "(:21\s|:400[0-9]{2}\s)"
-    if ($listening) {
-        Write-Host "Puerto 21 y/o pasivos activos" -ForegroundColor Green
-    } else {
-        Write-Host "Ninguno detectado" -ForegroundColor Yellow
-    }
+    if ($listening) { Write-Host "Puerto 21 y/o pasivos activos" -ForegroundColor Green }
+    else            { Write-Host "Ninguno detectado"             -ForegroundColor Yellow }
 
     # Junction anónima
     Write-Host "Junction anon:   " -NoNewline
     $anonJ = "$global:FTP_ANON_DIR\general"
     if ((Test-Path $anonJ) -and ((Get-Item $anonJ -Force).Attributes -match "ReparsePoint")) {
-        Write-Host "[ OK - Junction activa ]" -ForegroundColor Green
+        Write-Host "[ OK ]" -ForegroundColor Green
     } else {
         Write-Host "[ FALLO o no existe ]" -ForegroundColor Red
     }
 
-    # IP del servidor
+    # IP
     Write-Host "IP del servidor: " -NoNewline
     $ips = Get-NetIPAddress -AddressFamily IPv4 |
            Where-Object { $_.IPAddress -notmatch "^127\." -and $_.IPAddress -notmatch "^169\." } |
            Select-Object -ExpandProperty IPAddress
     Write-Host ($ips -join ", ") -ForegroundColor Blue
 
-    # Sitio IIS FTP
+    # Sitio IIS
     Import-Module WebAdministration -ErrorAction SilentlyContinue
     $site = Get-WebSite -Name $global:FTP_SITE_NAME -ErrorAction SilentlyContinue
     Write-Host "Sitio IIS-FTP:   " -NoNewline
     if ($site) {
         $color = if ($site.State -eq "Started") { "Green" } else { "Red" }
-        Write-Host "[ $($site.State.ToUpper()) ] - Puerto $global:FTP_PORT" -ForegroundColor $color
+        Write-Host "[ $($site.State.ToUpper()) ] puerto $global:FTP_PORT" -ForegroundColor $color
     } else {
-        Write-Host "[ NO CONFIGURADO - Use opcion 6 ]" -ForegroundColor Red
+        Write-Host "[ NO CONFIGURADO ]" -ForegroundColor Red
     }
 
-    # Carpetas
+    # Carpeta general
     Write-Host "Carpeta general: " -NoNewline
     if (Test-Path $global:FTP_GENERAL) { Write-Host "[ OK ] $global:FTP_GENERAL" -ForegroundColor Green }
-    else { Write-Host "[ NO EXISTE ]" -ForegroundColor Red }
+    else                               { Write-Host "[ NO EXISTE ]"               -ForegroundColor Red   }
 
-    Write-Host "---------------------------------------"
+    Write-Host "----------------------------------------"
 }
 
-# ============================================================
-# FUNCIÓN: Listar-UsuariosFTP
-# Equivalente a: listar_usuarios_ftp()
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# Listar-UsuariosFTP
+# ─────────────────────────────────────────────────────────────
 function global:Listar-UsuariosFTP {
     Write-Host "`n--- [ USUARIOS REGISTRADOS EN FTP ] ---" -ForegroundColor Cyan
     Write-Host ("{0,-20} | {1,-20}" -f "USUARIO", "GRUPO ACADEMICO")
-    Write-Host ("-" * 48)
+    Write-Host ("-" * 45)
 
     $miembros = Get-LocalGroupMember -Group "ftp-users" -ErrorAction SilentlyContinue
     if (!$miembros) {
@@ -372,21 +412,21 @@ function global:Listar-UsuariosFTP {
     } else {
         foreach ($m in $miembros) {
             $nombre = $m.Name -replace ".*\\", ""
-            $grupo  = "General / Sin Grupo"
+            $grupo  = "Sin Grupo"
             foreach ($g in @("reprobados","recursadores")) {
-                $enGrupo = Get-LocalGroupMember -Group $g -ErrorAction SilentlyContinue |
-                           Where-Object { ($_.Name -replace ".*\\","") -eq $nombre }
-                if ($enGrupo) { $grupo = $g; break }
+                $found = Get-LocalGroupMember -Group $g -ErrorAction SilentlyContinue |
+                         Where-Object { ($_.Name -replace ".*\\","") -eq $nombre }
+                if ($found) { $grupo = $g; break }
             }
             Write-Host ("{0,-20} | {1,-20}" -f $nombre, $grupo)
         }
     }
-    Write-Host ("-" * 48)
+    Write-Host ("-" * 45)
 }
 
-# ============================================================
-# HELPER: Set-PermisosDirectorio
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# Set-PermisosDirectorio  (helper)
+# ─────────────────────────────────────────────────────────────
 function global:Set-PermisosDirectorio {
     param(
         [string]$Path,
@@ -396,9 +436,8 @@ function global:Set-PermisosDirectorio {
     )
     $acl         = Get-Acl -Path $Path
     $inheritFlag = if ($Inherit) { "ContainerInherit,ObjectInherit" } else { "None" }
+    $ok          = $false
 
-    # Intentar primero con prefijo de equipo local
-    $ok = $false
     foreach ($accountName in @("$env:COMPUTERNAME\$Group", $Group)) {
         try {
             $account = New-Object System.Security.Principal.NTAccount($accountName)
@@ -411,14 +450,13 @@ function global:Set-PermisosDirectorio {
         } catch { }
     }
     if (!$ok) {
-        Write-Host "    [!] No se pudo aplicar ACL sobre '$Path' para '$Group'" -ForegroundColor Yellow
+        Write-Host "    [!] No se pudo aplicar ACL en '$Path' para '$Group'" -ForegroundColor Yellow
     }
 }
 
-# ============================================================
-# HELPER: Deny-InteractiveLogon
-# Equivalente a: shell=/sbin/nologin
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# Deny-InteractiveLogon  (helper - equivalente a nologin)
+# ─────────────────────────────────────────────────────────────
 function global:Deny-InteractiveLogon {
     param([string]$Usuario)
     try {
