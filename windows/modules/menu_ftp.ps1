@@ -1,46 +1,110 @@
-# =====================================================
-# menu_ftp.ps1 - Menu Practica 5: FTP
-# Llama funciones definidas en ftp_functions.ps1
-# El orquestador main.ps1 hace dot-source de este archivo
-# y llama la funcion: menu-ftp
-# =====================================================
+# =============================================================================
+# menu_ftp.ps1 — Menu interactivo de gestion FTP
+# Ubicacion: windows/modules/menu_ftp.ps1
+# Llamado desde: windows/main.ps1
+# Depende de:    windows/modules/ftp_functions.ps1
+# =============================================================================
 
-# Cargar ftp_functions.ps1 desde la misma carpeta que este archivo
-# $PSScriptRoot apunta a donde está menu_ftp.ps1 (carpeta modules\)
-$_ftpFunc = Join-Path $PSScriptRoot "ftp_functions.ps1"
-if (Test-Path $_ftpFunc) {
-    . $_ftpFunc
-} else {
-    Write-Host "[ERROR] No se encontro ftp_functions.ps1 en: $_ftpFunc" -ForegroundColor Red
-}
-
-# ─────────────────────────────────────────────────────
-# menu-ftp  ← nombre exacto que llama main.ps1
-# ─────────────────────────────────────────────────────
 function menu-ftp {
-    do {
-        Clear-Host
-        Write-Host "=======================================" -ForegroundColor Cyan
-        Write-Host "   PRACTICA 5: AUTOMATIZACION FTP"      -ForegroundColor White
-        Write-Host "       Windows Server 2022 / IIS"       -ForegroundColor DarkCyan
-        Write-Host "=======================================" -ForegroundColor Cyan
-        Write-Host "  1) Instalar Servicio FTP (IIS)"
-        Write-Host "  2) Configurar Servicio y Carpetas"
-        Write-Host "  3) Alta Masiva de Usuarios"
-        Write-Host "  4) Ver Usuarios del Sistema"
-        Write-Host "  5) Cambiar Usuario de Grupo"
-        Write-Host "  0) Regresar al Menu Principal"
-        Write-Host ""
-        $opcionFtp = Read-Host "Seleccione una opcion"
 
-        switch ($opcionFtp) {
-            "1" { Install-FTPService;     Pause }
-            "2" { Configure-FTPEnvironment; Pause }
-            "3" { Add-MassiveUsers;       Pause }
-            "4" { Show-FTPUsers;          Pause }
-            "5" { Update-UserGroup;       Pause }
-            "0" { return }
-            default { Write-Host "Opcion no valida" -ForegroundColor Red; Pause }
+    # Importar funciones si no estan cargadas
+    $modulePath = Join-Path $PSScriptRoot "ftp_functions.ps1"
+    if (-not (Get-Command "Initialize-ServidorFTP" -ErrorAction SilentlyContinue)) {
+        Import-Module $modulePath -ErrorAction Stop
+    }
+
+    # Configurar el servidor la primera vez (idempotente)
+    Initialize-ServidorFTP
+
+    # -------------------------------------------------------------------------
+    # Bucle principal del menu
+    # -------------------------------------------------------------------------
+    do {
+        Write-Host ""
+        Write-Host "=================================================" -ForegroundColor Cyan
+        Write-Host "        GESTOR DE USUARIOS FTP (WINDOWS)"        -ForegroundColor Cyan
+        Write-Host "=================================================" -ForegroundColor Cyan
+        Write-Host "  1. Agregar usuarios"
+        Write-Host "  2. Cambiar de grupo"
+        Write-Host "  3. Eliminar usuario"
+        Write-Host "  4. Volver al menu principal"
+        Write-Host "-------------------------------------------------" -ForegroundColor DarkGray
+        $opcion = Read-Host "  Elige una opcion (1-4)"
+
+        switch ($opcion) {
+
+            # ------------------------------------------------------------------
+            "1" {
+                Write-Host ""
+                Write-Host "--- Agregar Usuarios ---" -ForegroundColor White
+
+                $rawNum = Read-Host "  Cuantos usuarios deseas agregar?"
+                $num = 0
+                if (-not [int]::TryParse($rawNum, [ref]$num) -or $num -lt 1) {
+                    Write-Host "  [!] Numero no valido." -ForegroundColor Yellow
+                    break
+                }
+
+                for ($i = 1; $i -le $num; $i++) {
+                    Write-Host ""
+                    Write-Host "  -- Usuario $i de $num --" -ForegroundColor Cyan
+                    $nombre = Invoke-CapturarUsuarioFTPValido -mensaje "  Nombre de usuario"
+                    $contra = Invoke-CapturarContra
+                    $grupo  = Invoke-CapturarGrupoFTP
+                    New-UsuarioFTP -FTPUserName $nombre -FTPPassword $contra -FTPUserGroupName $grupo
+                }
+            }
+
+            # ------------------------------------------------------------------
+            "2" {
+                Write-Host ""
+                Write-Host "--- Cambiar de Grupo ---" -ForegroundColor White
+
+                $nombre = Read-Host "  Nombre del usuario a modificar"
+
+                if (-not (Invoke-UsuarioExiste -nombreUsuario $nombre)) {
+                    Write-Host "  [!] El usuario '$nombre' no existe." -ForegroundColor Yellow
+                    break
+                }
+
+                $grupoActual = Get-GrupoActualFTP -FTPUserName $nombre
+                Write-Host "  Grupo actual: $grupoActual" -ForegroundColor DarkGray
+
+                $nuevoGrupo = Invoke-CapturarGrupoFTP
+                Set-GrupoFTP -FTPUserName $nombre -NuevoGrupo $nuevoGrupo
+            }
+
+            # ------------------------------------------------------------------
+            "3" {
+                Write-Host ""
+                Write-Host "--- Eliminar Usuario ---" -ForegroundColor White
+
+                $nombre = Read-Host "  Nombre del usuario a eliminar"
+
+                if (-not (Invoke-UsuarioExiste -nombreUsuario $nombre)) {
+                    Write-Host "  [!] El usuario '$nombre' no existe." -ForegroundColor Yellow
+                    break
+                }
+
+                $confirm = Read-Host "  Confirmar eliminacion de '$nombre' (s/n)"
+                if ($confirm -eq "s") {
+                    Remove-UsuarioFTP -FTPUserName $nombre
+                }
+                else {
+                    Write-Host "  Operacion cancelada." -ForegroundColor DarkGray
+                }
+            }
+
+            # ------------------------------------------------------------------
+            "4" {
+                Write-Host "  Volviendo al menu principal..." -ForegroundColor DarkGray
+            }
+
+            # ------------------------------------------------------------------
+            default {
+                Write-Host "  [!] Opcion no valida. Intenta de nuevo." -ForegroundColor Yellow
+            }
         }
-    } while ($opcionFtp -ne "0")
+
+    } while ($opcion -ne "4")
 }
