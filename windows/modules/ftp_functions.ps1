@@ -176,46 +176,14 @@ function Initialize-ServidorFTP {
         Set-Acl $rutaGrupo $acl
     }
 
-    # Permisos NTFS para el usuario anonimo (IUSR) sobre su raiz
-    $aclPublic = Get-Acl "C:\FTP\LocalUser\Public"
-    $aclPublic.SetAccessRuleProtection($true, $false)
-
-    $adminRuleP = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "Administrators", "FullControl",
-        "ContainerInherit,ObjectInherit", "None", "Allow"
-    )
-    $aclPublic.AddAccessRule($adminRuleP)
-
-    $iusrRuleRoot = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "IUSR", "ReadAndExecute",
-        "ContainerInherit,ObjectInherit", "None", "Allow"
-    )
-    $aclPublic.AddAccessRule($iusrRuleRoot)
-    Set-Acl "C:\FTP\LocalUser\Public" $aclPublic
-
-    # Permisos carpeta general: IUSR solo lectura, usuarios autenticados pueden modificar
+    # Permisos carpeta general (todos los usuarios autenticados)
     $aclGen = Get-Acl "C:\FTP\LocalUser\Public\general"
-    $aclGen.SetAccessRuleProtection($true, $false)
-
-    $adminRuleG = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "Administrators", "FullControl",
+    $ruleGen = New-Object System.Security.AccessControl.FileSystemAccessRule(
+        "Users", "Modify",
         "ContainerInherit,ObjectInherit", "None", "Allow"
     )
-    $aclGen.AddAccessRule($adminRuleG)
-
-    $iusrRuleGen = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "IUSR", "ReadAndExecute",
-        "ContainerInherit,ObjectInherit", "None", "Allow"
-    )
-    $aclGen.AddAccessRule($iusrRuleGen)
-
-    $authRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
-        "Authenticated Users", "Modify",
-        "ContainerInherit,ObjectInherit", "None", "Allow"
-    )
-    $aclGen.AddAccessRule($authRule)
+    $aclGen.SetAccessRule($ruleGen)
     Set-Acl "C:\FTP\LocalUser\Public\general" $aclGen
-
     Write-Host "  OK" -ForegroundColor Green
 
     # 4. Firewall
@@ -256,10 +224,9 @@ function Initialize-ServidorFTP {
         -Filter "/system.ftpServer/security/authorization" `
         -Name "." -Location "FTP" -ErrorAction SilentlyContinue
 
-    # Regla anonimo: comodin "*" para que IIS reconozca sesiones anonimas
     Add-WebConfiguration "/system.ftpServer/security/authorization" `
         -PSPath "IIS:\" `
-        -Value @{ accessType = "Allow"; users = "*"; permissions = 1 } `
+        -Value @{ accessType = "Allow"; users = "IUSR"; permissions = 1 } `
         -Location "FTP"
 
     Add-WebConfiguration "/system.ftpServer/security/authorization" `
@@ -279,12 +246,6 @@ function Initialize-ServidorFTP {
         -Name "ftpServer.security.ssl.controlChannelPolicy" -Value 0
     Set-ItemProperty -Path "IIS:\Sites\FTP" `
         -Name "ftpServer.security.ssl.dataChannelPolicy" -Value 0
-
-    # Directorio virtual para que IIS resuelva la raiz del usuario anonimo
-    if (-not (Get-WebVirtualDirectory -Site "FTP" -Application "/" -Name "LocalUser" -ErrorAction SilentlyContinue)) {
-        New-WebVirtualDirectory -Site "FTP" -Application "/" `
-            -Name "LocalUser" -PhysicalPath "C:\FTP\LocalUser" | Out-Null
-    }
 
     Restart-WebItem "IIS:\Sites\FTP"
     Write-Host "  OK" -ForegroundColor Green
@@ -330,9 +291,9 @@ function New-UsuarioFTP {
     $acl.SetAccessRule($rule)
     Set-Acl "$userPath\$FTPUserName" $acl
 
-    # Junctions: carpeta general y carpeta de grupo (mklink /J en lugar de /D)
-    cmd /c "mklink /J `"$userPath\general`" `"C:\FTP\LocalUser\Public\general`"" | Out-Null
-    cmd /c "mklink /J `"$userPath\$FTPUserGroupName`" `"C:\FTP\grupos\$FTPUserGroupName`"" | Out-Null
+    # Enlaces simbolicos: carpeta general y carpeta de grupo
+    cmd /c "mklink /D `"$userPath\general`" `"C:\FTP\LocalUser\Public\general`"" | Out-Null
+    cmd /c "mklink /D `"$userPath\$FTPUserGroupName`" `"C:\FTP\grupos\$FTPUserGroupName`"" | Out-Null
 
     Write-Host "  [OK] Usuario '$FTPUserName' creado en el grupo '$FTPUserGroupName'." -ForegroundColor Green
 }
@@ -360,12 +321,12 @@ function Set-GrupoFTP {
     $newGroup = [ADSI]"WinNT://$env:ComputerName/$NuevoGrupo,group"
     $newGroup.Invoke("Add", "WinNT://$env:ComputerName/$FTPUserName,user")
 
-    # Actualizar junction de grupo
+    # Actualizar enlace simbolico
     $userPath = "C:\FTP\LocalUser\$FTPUserName"
     if ($viejoGrupo -ne "") {
         cmd /c "rmdir /S /Q `"$userPath\$viejoGrupo`"" 2>$null
     }
-    cmd /c "mklink /J `"$userPath\$NuevoGrupo`" `"C:\FTP\grupos\$NuevoGrupo`"" | Out-Null
+    cmd /c "mklink /D `"$userPath\$NuevoGrupo`" `"C:\FTP\grupos\$NuevoGrupo`"" | Out-Null
 
     # Reiniciar servicio FTP para aplicar permisos
     Write-Host "  Actualizando permisos en tiempo real..." -ForegroundColor White
@@ -381,7 +342,7 @@ function Remove-UsuarioFTP {
     $adsi = [ADSI]"WinNT://$env:ComputerName"
     $adsi.Delete("User", $FTPUserName)
 
-    # Eliminar carpeta y junctions
+    # Eliminar carpeta y enlaces simbolicos
     $userPath = "C:\FTP\LocalUser\$FTPUserName"
     if (Test-Path $userPath) {
         Remove-Item $userPath -Recurse -Force
