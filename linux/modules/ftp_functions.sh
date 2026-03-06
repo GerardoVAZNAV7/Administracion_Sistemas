@@ -80,14 +80,18 @@ function configurar_montajes() {
 
     sudo mkdir -p "$home/general" "$home/$group" "$home/$user"
 
-    # Limpiar montajes previos si existen (Evita errores de duplicados)
     sudo umount "$home/general" 2>/dev/null
     sudo umount "$home/reprobados" 2>/dev/null
     sudo umount "$home/recursadores" 2>/dev/null
 
-    # Montajes actuales
     sudo mount --bind /srv/ftp/general "$home/general"
     sudo mount --bind /srv/ftp/groups/"$group" "$home/$group"
+
+    # --- NUEVO: forzar ACLs sobre el punto de montaje ya activo ---
+    sudo setfacl -m u:"$user":rwx "$home/general"
+    sudo setfacl -d -m u:"$user":rwx "$home/general"
+    sudo setfacl -m g:ftp-users:rwx "$home/general"
+    sudo setfacl -d -m g:ftp-users:rwx "$home/general"
 }
 
 function aplicar_permisos_personales() {
@@ -178,8 +182,12 @@ function configurar_seguridad_ftp() {
     echo "[+] Ajustando políticas de SELinux..."
     sudo setsebool -P ftpd_full_access on &>/dev/null
     sudo setsebool -P tftp_home_dir on &>/dev/null
-    
-    # Asegurar que nologin sea una shell válida para vsftpd
+
+    # --- NUEVO: contexto SELinux correcto para directorios FTP con escritura ---
+    sudo chcon -R -t public_content_rw_t /srv/ftp/general &>/dev/null
+    sudo chcon -R -t public_content_rw_t /srv/ftp/groups/reprobados &>/dev/null
+    sudo chcon -R -t public_content_rw_t /srv/ftp/groups/recursadores &>/dev/null
+
     if ! grep -q "/sbin/nologin" /etc/shells; then
         echo "/sbin/nologin" | sudo tee -a /etc/shells > /dev/null
     fi
