@@ -374,15 +374,21 @@ function Initialize-ServidorFTP {
         -Filter "/system.ftpServer/security/authorization" `
         -PSPath "IIS:\" -Location "FTP" -ErrorAction SilentlyContinue
 
-    # Anonimo: solo lectura
+    # Anonimo ("?"): solo lectura (permissions=1)
+    # En IIS-FTP "?" = usuario anonimo, "*" = todos los autenticados
     Add-WebConfiguration "/system.ftpServer/security/authorization" `
         -PSPath "IIS:\" -Location "FTP" `
-        -Value @{ accessType = "Allow"; users = "*"; permissions = 1 }
+        -Value @{ accessType = "Allow"; users = "?"; permissions = 1 }
 
-    # Usuarios autenticados de los grupos: lectura + escritura
+    # Usuarios autenticados de los grupos: lectura + escritura (permissions=3)
     Add-WebConfiguration "/system.ftpServer/security/authorization" `
         -PSPath "IIS:\" -Location "FTP" `
         -Value @{ accessType = "Allow"; roles = "reprobados,recursadores"; permissions = 3 }
+
+    # Denegar a cualquier otro autenticado que no sea de los grupos
+    Add-WebConfiguration "/system.ftpServer/security/authorization" `
+        -PSPath "IIS:\" -Location "FTP" `
+        -Value @{ accessType = "Deny"; users = "*"; permissions = 3 }
 
     # Grupos locales de Windows
     $adsi = [ADSI]"WinNT://$env:ComputerName"
