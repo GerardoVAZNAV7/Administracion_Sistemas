@@ -107,6 +107,10 @@
 # Ejecutar como Administrador en el servidor
 # Corrige todos los problemas detectados en el diagnostico
 
+# fix_ftp.ps1
+# Ejecutar como Administrador en el servidor
+# Corrige todos los problemas detectados en el diagnostico
+
 Import-Module WebAdministration -ErrorAction Stop
 
 Write-Host "=================================================" -ForegroundColor Cyan
@@ -287,8 +291,14 @@ if ($ftpSite -and $ftpSite.ftpServer.security.ssl) {
 $allLocations = $xml.configuration.location
 foreach ($loc in $allLocations) {
     if ($loc.path -eq "FTP") {
-        $authNode = $loc."system.ftpServer"?.security?.authorization
-        if ($authNode) { $authNode.RemoveAll() }
+        $ftpNode = $loc."system.ftpServer"
+        if ($ftpNode) {
+            $secNode = $ftpNode.security
+            if ($secNode) {
+                $authNode = $secNode.authorization
+                if ($authNode) { $authNode.RemoveAll() }
+            }
+        }
     }
 }
 
