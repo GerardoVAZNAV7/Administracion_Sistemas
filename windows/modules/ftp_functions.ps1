@@ -639,3 +639,103 @@ Function Get-FtpUsers {
 
     Write-Host "**********************"
 }
+
+
+# ─────────────────────────────────────────────
+#  ALIAS — compatibilidad con menu_ftp.ps1
+# ─────────────────────────────────────────────
+function Initialize-ServidorFTP {
+    Install-FtpDaemon
+    Initialize-FtpGroups
+}
+
+function New-UsuarioFTP {
+    param(
+        [string]$FTPUserName,
+        [string]$FTPPassword,
+        [string]$FTPUserGroupName
+    )
+    New-FtpUser -Username $FTPUserName -Password $FTPPassword -Group $FTPUserGroupName
+}
+
+function Set-GrupoFTP {
+    param(
+        [string]$FTPUserName,
+        [string]$NuevoGrupo
+    )
+    Update-FtpUserGroup -Username $FTPUserName -CurrentGroup (Get-GrupoActualFTP $FTPUserName) -NewGroup $NuevoGrupo
+}
+
+function Remove-UsuarioFTP {
+    param([string]$FTPUserName)
+    # Quitar de grupos
+    foreach ($g in @("Reprobados","Recursadores")) {
+        Remove-LocalGroupMember -Group $g -Member $FTPUserName -ErrorAction SilentlyContinue
+    }
+    Remove-LocalUser -Name $FTPUserName -ErrorAction SilentlyContinue
+    $userRoot = "$script:LocalUserPath\$FTPUserName"
+    if (Test-Path $userRoot) {
+        Get-ChildItem $userRoot -Force |
+            Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint } |
+            ForEach-Object { cmd /c "rmdir `"$($_.FullName)`"" 2>$null | Out-Null }
+        Remove-Item $userRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if (Test-Path $script:UserListPath) {
+        $lines = Get-Content $script:UserListPath | Where-Object { $_ -ne $FTPUserName }
+        Set-Content $script:UserListPath $lines
+    }
+    Write-Host "  [OK] Usuario '$FTPUserName' eliminado." -ForegroundColor Green
+}
+
+function Invoke-UsuarioExiste {
+    param([string]$nombre)
+    return ($null -ne (Get-LocalUser -Name $nombre -ErrorAction SilentlyContinue))
+}
+
+function Get-GrupoActualFTP {
+    param([string]$FTPUserName)
+    try {
+        if (Get-LocalGroupMember -Group "Reprobados"   -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "*$FTPUserName" }) { return "Reprobados" }
+        if (Get-LocalGroupMember -Group "Recursadores" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "*$FTPUserName" }) { return "Recursadores" }
+    } catch {}
+    return ""
+}
+
+function Invoke-CapturarUsuarioFTPValido {
+    param([string]$mensaje)
+    do {
+        $c = Read-Host "  $mensaje"
+        if (-not $c)                            { Write-Host "  [!] No puede estar vacio."        -ForegroundColor Yellow }
+        elseif ($c -notmatch '^[a-zA-Z0-9]+$')  { Write-Host "  [!] Solo letras y numeros."       -ForegroundColor Yellow }
+        elseif ($c -match    '^[0-9]')           { Write-Host "  [!] No puede empezar con numero." -ForegroundColor Yellow }
+        elseif ($c.Length -gt 15)                { Write-Host "  [!] Maximo 15 caracteres."        -ForegroundColor Yellow }
+        elseif (Invoke-UsuarioExiste $c)         { Write-Host "  [!] El usuario '$c' ya existe."  -ForegroundColor Yellow }
+        else { return $c }
+    } while ($true)
+}
+
+function Invoke-CapturarContra {
+    $regex = "^(?=.*[A-Z])(?=.*[a-z])(?=.*[0-9])(?=.*[^a-zA-Z0-9]).{8,15}$"
+    do {
+        $c = Read-Host "  Contrasena (8-15, May, min, num, especial)"
+        if ($c -notmatch $regex) {
+            Write-Host "  [!] No cumple requisitos. Intentelo de nuevo." -ForegroundColor Yellow
+            $c = ""
+        }
+    } while (-not $c)
+    return $c
+}
+
+function Invoke-CapturarGrupoFTP {
+    do {
+        Write-Host "  Seleccione grupo:"
+        Write-Host "    1) Reprobados"
+        Write-Host "    2) Recursadores"
+        $g = Read-Host "  Opcion"
+        if ($g -eq "1") { return "Reprobados"   }
+        if ($g -eq "2") { return "Recursadores" }
+        Write-Host "  [!] Ingrese 1 o 2." -ForegroundColor Yellow
+    } while ($true)
+}
