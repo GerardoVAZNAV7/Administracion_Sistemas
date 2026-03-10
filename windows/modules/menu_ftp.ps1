@@ -27,9 +27,10 @@ function menu-ftp {
         Write-Host "  1. Agregar usuarios"
         Write-Host "  2. Cambiar de grupo"
         Write-Host "  3. Eliminar usuario"
-        Write-Host "  4. Volver al menu principal"
+        Write-Host "  4. Reconfigurar servidor (Reset)"
+        Write-Host "  5. Volver al menu principal"
         Write-Host "-------------------------------------------------" -ForegroundColor DarkGray
-        $opcion = Read-Host "  Elige una opcion (1-4)"
+        $opcion = Read-Host "  Elige una opcion (1-5)"
 
         switch ($opcion) {
 
@@ -101,6 +102,19 @@ function menu-ftp {
 
             # ------------------------------------------------------------------
             "4" {
+                Write-Host ""
+                Write-Host "--- Reconfigurar Servidor (Reset) ---" -ForegroundColor White
+                Write-Host "  Esto reaplica toda la configuracion de IIS, SSL, permisos y firewall." -ForegroundColor DarkGray
+                $confirm = Read-Host "  Confirmar reset (s/n)"
+                if ($confirm -eq "s") {
+                    Initialize-ServidorFTP
+                } else {
+                    Write-Host "  Operacion cancelada." -ForegroundColor DarkGray
+                }
+            }
+
+            # ------------------------------------------------------------------
+            "5" {
                 Write-Host "  Volviendo al menu principal..." -ForegroundColor DarkGray
             }
 
@@ -110,5 +124,5 @@ function menu-ftp {
             }
         }
 
-    } while ($opcion -ne "4")
+    } while ($opcion -ne "5")
 }
