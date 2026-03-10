@@ -329,6 +329,12 @@ function Initialize-ServidorFTP {
     # ------------------------------------------------------------------
     Write-Host "[7/8] Configurando Sitio FTP en IIS..." -ForegroundColor White
 
+    # Detener servicios UNA SOLA VEZ antes de todas las modificaciones al config
+    Write-Host "  Deteniendo servicios IIS para modificar configuracion..." -ForegroundColor DarkGray
+    Stop-Service W3SVC  -Force -ErrorAction SilentlyContinue
+    Stop-Service ftpsvc -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+
     if (-not (Get-WebSite -Name "FTP" -ErrorAction SilentlyContinue)) {
         New-WebFtpSite -Name "FTP" -Port 21 -PhysicalPath "C:\FTP\LocalUser" -Force | Out-Null
     } else {
@@ -399,7 +405,6 @@ function Initialize-ServidorFTP {
     $raw = $raw -replace 'controlChannelPolicy="SslRequire[^"]*"', 'controlChannelPolicy="SslAllow"'
     $raw = $raw -replace 'dataChannelPolicy="SslRequire[^"]*"',    'dataChannelPolicy="SslAllow"'
     Set-Content $cfgPath $raw -Encoding UTF8
-
     Write-Host "  SSL configurado como SslAllow (sin cifrado requerido)." -ForegroundColor Green
 
     Write-Host "  OK" -ForegroundColor Green
