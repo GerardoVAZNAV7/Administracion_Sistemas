@@ -11,7 +11,6 @@ source "$BASE_DIR/modules/ftp_functions.sh"
 menu_ftp() {
     clear
 
-    # Inicializar si vsftpd no esta corriendo (idempotente)
     if ! systemctl is-active --quiet vsftpd; then
         inicializar_sistema
     fi
@@ -33,7 +32,6 @@ menu_ftp() {
 
         case "$opcion" in
 
-            # ------------------------------------------------------------------
             1)
                 echo ""
                 echo "--- Alta de Usuarios ---"
@@ -47,17 +45,21 @@ menu_ftp() {
                 for (( i=1; i<=n; i++ )); do
                     echo ""
                     echo "  -- Usuario $i de $n --"
-                    local uname
-                    uname=$(capturar_usuario_valido "Nombre de usuario")
-                    local upass
-                    upass=$(capturar_contrasena)
-                    local ugroup
-                    ugroup=$(capturar_grupo_ftp)
+
+                    # Llamadas directas (NO con $()) para que read funcione
+                    capturar_usuario_valido "Nombre de usuario"
+                    local uname="$_RESULT_USUARIO"
+
+                    capturar_contrasena
+                    local upass="$_RESULT_PASS"
+
+                    capturar_grupo_ftp
+                    local ugroup="$_RESULT_GRUPO"
+
                     crear_usuario "$uname" "$upass" "$ugroup"
                 done
                 ;;
 
-            # ------------------------------------------------------------------
             2)
                 echo ""
                 echo "--- Modificar Grupo ---"
@@ -71,13 +73,13 @@ menu_ftp() {
                     id "$uname" | grep -q "recursadores" && cur_group="recursadores"
                     echo "  Grupo actual: $cur_group"
 
-                    local new_group
-                    new_group=$(capturar_grupo_ftp)
+                    capturar_grupo_ftp
+                    local new_group="$_RESULT_GRUPO"
+
                     modificar_grupo_usuario "$uname" "$new_group"
                 fi
                 ;;
 
-            # ------------------------------------------------------------------
             3)
                 echo ""
                 echo "--- Eliminar Usuario ---"
@@ -95,29 +97,24 @@ menu_ftp() {
                 fi
                 ;;
 
-            # ------------------------------------------------------------------
             4)
                 listar_usuarios_ftp
                 ;;
 
-            # ------------------------------------------------------------------
             5)
                 verificar_servicio_ftp
                 ;;
 
-            # ------------------------------------------------------------------
             6)
                 echo "  Reaplicando configuracion completa..."
                 inicializar_sistema
                 ;;
 
-            # ------------------------------------------------------------------
             0)
                 echo "  Volviendo al menu principal..."
                 break
                 ;;
 
-            # ------------------------------------------------------------------
             *)
                 echo "  [!] Opcion invalida. Intente de nuevo."
                 ;;
