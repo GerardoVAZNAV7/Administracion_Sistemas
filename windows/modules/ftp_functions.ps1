@@ -413,26 +413,40 @@ function Initialize-ServidorFTP {
     # ------------------------------------------------------------------
     Write-Host "[8/8] Aplicando reglas de autorizacion IIS-FTP..." -ForegroundColor White
 
-    # Limpiar reglas previas
-    Clear-WebConfiguration `
-        -Filter "/system.ftpServer/security/authorization" `
+    # Limpiar reglas previas de forma segura (Clear-WebConfiguration falla si el
+    # nodo no existe — usamos Remove-WebConfigurationProperty en su lugar)
+    $authRules = Get-WebConfiguration "/system.ftpServer/security/authorization" `
         -PSPath "IIS:\" -Location "FTP" -ErrorAction SilentlyContinue
+    if ($authRules) {
+        $authRules | ForEach-Object {
+            Remove-WebConfigurationElement `
+                -Filter "/system.ftpServer/security/authorization" `
+                -PSPath "IIS:\" -Location "FTP" `
+                -ErrorAction SilentlyContinue
+        }
+    }
 
-    # Anonimo ("?"): solo lectura (permissions=1)
-    # En IIS-FTP "?" = usuario anonimo, "*" = todos los autenticados
-    Add-WebConfiguration "/system.ftpServer/security/authorization" `
-        -PSPath "IIS:\" -Location "FTP" `
-        -Value @{ accessType = "Allow"; users = "?"; permissions = 1 }
+    # Limpiar via appcmd como respaldo (mas agresivo, no falla si no hay reglas)
+    $appcmdPath = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
+    & $appcmdPath set config -section:system.ftpServer/security/authorization `
+        /-"[accessType='Allow',users='?']" /commit:apphost 2>$null
+    & $appcmdPath set config -section:system.ftpServer/security/authorization `
+        /-"[accessType='Allow',roles='reprobados,recursadores']" /commit:apphost 2>$null
+    & $appcmdPath set config -section:system.ftpServer/security/authorization `
+        /-"[accessType='Deny',users='*']" /commit:apphost 2>$null
 
-    # Usuarios autenticados de los grupos: lectura + escritura (permissions=3)
-    Add-WebConfiguration "/system.ftpServer/security/authorization" `
-        -PSPath "IIS:\" -Location "FTP" `
-        -Value @{ accessType = "Allow"; roles = "reprobados,recursadores"; permissions = 3 }
+    # Agregar reglas nuevas via appcmd (mas confiable que Add-WebConfiguration)
+    # Anonimo ("?"): solo lectura
+    & $appcmdPath set config -section:system.ftpServer/security/authorization `
+        /+"[accessType='Allow',users='?',permissions='Read']" /commit:apphost | Out-Null
 
-    # Denegar a cualquier otro autenticado que no sea de los grupos
-    Add-WebConfiguration "/system.ftpServer/security/authorization" `
-        -PSPath "IIS:\" -Location "FTP" `
-        -Value @{ accessType = "Deny"; users = "*"; permissions = 3 }
+    # Grupos autenticados: lectura + escritura
+    & $appcmdPath set config -section:system.ftpServer/security/authorization `
+        /+"[accessType='Allow',roles='reprobados,recursadores',permissions='Read,Write']" /commit:apphost | Out-Null
+
+    # Denegar a cualquier otro autenticado
+    & $appcmdPath set config -section:system.ftpServer/security/authorization `
+        /+"[accessType='Deny',users='*',permissions='Read,Write']" /commit:apphost | Out-Null
 
     # Grupos locales de Windows
     $adsi = [ADSI]"WinNT://$env:ComputerName"
