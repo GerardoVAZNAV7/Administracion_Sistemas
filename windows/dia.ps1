@@ -7,8 +7,8 @@ Import-Module WebAdministration -ErrorAction Stop
 $adminGroup = (New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")).Translate(
     [System.Security.Principal.NTAccount]).Value
 
-Write-Host "=================================================" -ForegroundColor Cyan
-Write-Host "  FIX FTP v2" -ForegroundColor Cyan
+Write-Host "=================================================" 
+Write-Host "  FIX FTP v2" 
 Write-Host "================================================="
 
 # ─────────────────────────────────────────────────────────────────
