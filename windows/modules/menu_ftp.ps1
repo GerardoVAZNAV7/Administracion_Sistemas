@@ -10,10 +10,10 @@ function menu-ftp {
     # Importar funciones si no estan cargadas
     $modulePath = Join-Path $PSScriptRoot "ftp_functions.ps1"
     if (-not (Get-Command "Initialize-ServidorFTP" -ErrorAction SilentlyContinue)) {
-        Import-Module $modulePath -ErrorAction Stop
+        . $modulePath   # dot-source para que las funciones queden en el scope actual
     }
 
-    # Configurar el servidor la primera vez (idempotente)
+    # Configurar el servidor la primera vez (idempotente — seguro llamar siempre)
     Initialize-ServidorFTP
 
     # -------------------------------------------------------------------------
@@ -68,6 +68,10 @@ function menu-ftp {
                 }
 
                 $grupoActual = Get-GrupoActualFTP -FTPUserName $nombre
+                if ($grupoActual -eq "") {
+                    Write-Host "  [!] El usuario '$nombre' no pertenece a ningun grupo FTP." -ForegroundColor Yellow
+                    break
+                }
                 Write-Host "  Grupo actual: $grupoActual" -ForegroundColor DarkGray
 
                 $nuevoGrupo = Invoke-CapturarGrupoFTP
