@@ -1,24 +1,17 @@
 # =============================================================================
-# menu_ftp.ps1 — Menu interactivo de gestion FTP
+# menu_ftp.ps1
 # Ubicacion: windows/modules/menu_ftp.ps1
-# Llamado desde: windows/main.ps1
-# Depende de:    windows/modules/ftp_functions.ps1
 # =============================================================================
 
 function menu-ftp {
 
-    # Importar funciones si no estan cargadas
     $modulePath = Join-Path $PSScriptRoot "ftp_functions.ps1"
     if (-not (Get-Command "Initialize-ServidorFTP" -ErrorAction SilentlyContinue)) {
-        . $modulePath   # dot-source para que las funciones queden en el scope actual
+        . $modulePath
     }
 
-    # Configurar el servidor la primera vez (idempotente — seguro llamar siempre)
     Initialize-ServidorFTP
 
-    # -------------------------------------------------------------------------
-    # Bucle principal del menu
-    # -------------------------------------------------------------------------
     do {
         Write-Host ""
         Write-Host "=================================================" -ForegroundColor Cyan
@@ -30,99 +23,68 @@ function menu-ftp {
         Write-Host "  4. Reconfigurar servidor (Reset)"
         Write-Host "  5. Volver al menu principal"
         Write-Host "-------------------------------------------------" -ForegroundColor DarkGray
-        $opcion = Read-Host "  Elige una opcion (1-5)"
+        $op = Read-Host "  Elige una opcion (1-5)"
 
-        switch ($opcion) {
+        switch ($op) {
 
-            # ------------------------------------------------------------------
             "1" {
                 Write-Host ""
                 Write-Host "--- Agregar Usuarios ---" -ForegroundColor White
-
-                $rawNum = Read-Host "  Cuantos usuarios deseas agregar?"
-                $num = 0
-                if (-not [int]::TryParse($rawNum, [ref]$num) -or $num -lt 1) {
-                    Write-Host "  [!] Numero no valido." -ForegroundColor Yellow
-                    break
+                $rawN = Read-Host "  Cuantos usuarios?"
+                $n = 0
+                if (-not [int]::TryParse($rawN,[ref]$n) -or $n -lt 1) {
+                    Write-Host "  [!] Numero invalido." -ForegroundColor Yellow; break
                 }
-
-                for ($i = 1; $i -le $num; $i++) {
+                for ($i = 1; $i -le $n; $i++) {
                     Write-Host ""
-                    Write-Host "  -- Usuario $i de $num --" -ForegroundColor Cyan
-                    $nombre = Invoke-CapturarUsuarioFTPValido -mensaje "  Nombre de usuario"
-                    $contra = Invoke-CapturarContra
-                    $grupo  = Invoke-CapturarGrupoFTP
-                    New-UsuarioFTP -FTPUserName $nombre -FTPPassword $contra -FTPUserGroupName $grupo
+                    Write-Host "  -- Usuario $i de $n --" -ForegroundColor Cyan
+                    $nom   = Invoke-CapturarUsuarioFTPValido -mensaje "Nombre de usuario"
+                    $pass  = Invoke-CapturarContra
+                    $grupo = Invoke-CapturarGrupoFTP
+                    New-UsuarioFTP -FTPUserName $nom -FTPPassword $pass -FTPUserGroupName $grupo
                 }
             }
 
-            # ------------------------------------------------------------------
             "2" {
                 Write-Host ""
                 Write-Host "--- Cambiar de Grupo ---" -ForegroundColor White
-
-                $nombre = Read-Host "  Nombre del usuario a modificar"
-
-                if (-not (Invoke-UsuarioExiste -nombreUsuario $nombre)) {
-                    Write-Host "  [!] El usuario '$nombre' no existe." -ForegroundColor Yellow
-                    break
+                $nom = Read-Host "  Nombre del usuario"
+                if (-not (Invoke-UsuarioExiste -nombre $nom)) {
+                    Write-Host "  [!] El usuario '$nom' no existe." -ForegroundColor Yellow; break
                 }
-
-                $grupoActual = Get-GrupoActualFTP -FTPUserName $nombre
-                if ($grupoActual -eq "") {
-                    Write-Host "  [!] El usuario '$nombre' no pertenece a ningun grupo FTP." -ForegroundColor Yellow
-                    break
+                $actual = Get-GrupoActualFTP -FTPUserName $nom
+                if ($actual -eq "") {
+                    Write-Host "  [!] '$nom' no pertenece a ningun grupo FTP." -ForegroundColor Yellow; break
                 }
-                Write-Host "  Grupo actual: $grupoActual" -ForegroundColor DarkGray
-
-                $nuevoGrupo = Invoke-CapturarGrupoFTP
-                Set-GrupoFTP -FTPUserName $nombre -NuevoGrupo $nuevoGrupo
+                Write-Host "  Grupo actual: $actual" -ForegroundColor DarkGray
+                $nuevo = Invoke-CapturarGrupoFTP
+                Set-GrupoFTP -FTPUserName $nom -NuevoGrupo $nuevo
             }
 
-            # ------------------------------------------------------------------
             "3" {
                 Write-Host ""
                 Write-Host "--- Eliminar Usuario ---" -ForegroundColor White
-
-                $nombre = Read-Host "  Nombre del usuario a eliminar"
-
-                if (-not (Invoke-UsuarioExiste -nombreUsuario $nombre)) {
-                    Write-Host "  [!] El usuario '$nombre' no existe." -ForegroundColor Yellow
-                    break
+                $nom = Read-Host "  Nombre del usuario"
+                if (-not (Invoke-UsuarioExiste -nombre $nom)) {
+                    Write-Host "  [!] El usuario '$nom' no existe." -ForegroundColor Yellow; break
                 }
-
-                $confirm = Read-Host "  Confirmar eliminacion de '$nombre' (s/n)"
-                if ($confirm -eq "s") {
-                    Remove-UsuarioFTP -FTPUserName $nombre
-                }
-                else {
-                    Write-Host "  Operacion cancelada." -ForegroundColor DarkGray
-                }
+                $cf = Read-Host "  Confirmar eliminacion de '$nom' (s/n)"
+                if ($cf -eq "s") { Remove-UsuarioFTP -FTPUserName $nom }
+                else { Write-Host "  Cancelado." -ForegroundColor DarkGray }
             }
 
-            # ------------------------------------------------------------------
             "4" {
                 Write-Host ""
-                Write-Host "--- Reconfigurar Servidor (Reset) ---" -ForegroundColor White
-                Write-Host "  Esto reaplica toda la configuracion de IIS, SSL, permisos y firewall." -ForegroundColor DarkGray
-                $confirm = Read-Host "  Confirmar reset (s/n)"
-                if ($confirm -eq "s") {
-                    Initialize-ServidorFTP
-                } else {
-                    Write-Host "  Operacion cancelada." -ForegroundColor DarkGray
-                }
+                Write-Host "--- Reconfigurar Servidor ---" -ForegroundColor White
+                $cf = Read-Host "  Confirmar reset completo (s/n)"
+                if ($cf -eq "s") { Initialize-ServidorFTP }
+                else { Write-Host "  Cancelado." -ForegroundColor DarkGray }
             }
 
-            # ------------------------------------------------------------------
-            "5" {
-                Write-Host "  Volviendo al menu principal..." -ForegroundColor DarkGray
-            }
+            "5" { Write-Host "  Volviendo al menu principal..." -ForegroundColor DarkGray }
 
-            # ------------------------------------------------------------------
-            default {
-                Write-Host "  [!] Opcion no valida. Intenta de nuevo." -ForegroundColor Yellow
-            }
+            default { Write-Host "  [!] Opcion invalida." -ForegroundColor Yellow }
         }
 
-    } while ($opcion -ne "5")
+    } while ($op -ne "5")
 }
