@@ -413,30 +413,63 @@ function Initialize-ServidorFTP {
     # ------------------------------------------------------------------
     Write-Host "[8/8] Aplicando reglas de autorizacion IIS-FTP..." -ForegroundColor White
 
-    # Limpiar y recrear reglas de autorizacion via appcmd
-    # appcmd no lanza excepcion si la regla no existe (a diferencia de los cmdlets IIS)
-    $appcmdPath = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
+    # Limpiar y recrear reglas de autorizacion editando el XML directamente.
+    # Este metodo es el unico 100% idempotente: borra el nodo completo y lo
+    # rescribe, eliminando cualquier regla duplicada o residual.
+    $cfgAuth = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
+    [xml]$xmlAuth = Get-Content $cfgAuth
 
-    # Eliminar reglas existentes (2>$null suprime el error si no existen)
-    & $appcmdPath set config "FTP" -section:system.ftpServer/security/authorization `
-        /-"[accessType='Allow',users='?']" /commit:apphost 2>$null
-    & $appcmdPath set config "FTP" -section:system.ftpServer/security/authorization `
-        /-"[accessType='Allow',roles='reprobados,recursadores']" /commit:apphost 2>$null
-    & $appcmdPath set config "FTP" -section:system.ftpServer/security/authorization `
-        /-"[accessType='Deny',users='*']" /commit:apphost 2>$null
+    # Localizar el nodo <location path="FTP"> que contiene las reglas de autorizacion
+    $locationNode = $xmlAuth.configuration.location | Where-Object { $_.path -eq "FTP" }
 
-    # Agregar reglas limpias
-    # Anonimo "?": solo lectura
-    & $appcmdPath set config "FTP" -section:system.ftpServer/security/authorization `
-        /+"[accessType='Allow',users='?',permissions='Read']" /commit:apphost 2>$null
+    if (-not $locationNode) {
+        # Crear el nodo location si no existe
+        $locationNode = $xmlAuth.CreateElement("location")
+        $locationNode.SetAttribute("path", "FTP")
+        $xmlAuth.configuration.AppendChild($locationNode) | Out-Null
+    }
 
-    # Grupos autenticados: lectura + escritura
-    & $appcmdPath set config "FTP" -section:system.ftpServer/security/authorization `
-        /+"[accessType='Allow',roles='reprobados,recursadores',permissions='Read,Write']" /commit:apphost 2>$null
+    # Buscar o crear system.ftpServer/security/authorization dentro del location
+    $ftpServerNode = $locationNode."system.ftpServer"
+    if (-not $ftpServerNode) {
+        $ftpServerNode = $xmlAuth.CreateElement("system.ftpServer")
+        $locationNode.AppendChild($ftpServerNode) | Out-Null
+    }
+    $secNode = $ftpServerNode.security
+    if (-not $secNode) {
+        $secNode = $xmlAuth.CreateElement("security")
+        $ftpServerNode.AppendChild($secNode) | Out-Null
+    }
+    $authNode = $secNode.authorization
+    if ($authNode) {
+        # Borrar todas las reglas existentes
+        $authNode.RemoveAll()
+    } else {
+        $authNode = $xmlAuth.CreateElement("authorization")
+        $secNode.AppendChild($authNode) | Out-Null
+    }
 
-    # Denegar al resto de autenticados
-    & $appcmdPath set config "FTP" -section:system.ftpServer/security/authorization `
-        /+"[accessType='Deny',users='*',permissions='Read,Write']" /commit:apphost 2>$null
+    # Funcion helper para crear una regla <add .../>
+    function New-AuthRule($xml, $accessType, $users, $roles, $perms) {
+        $rule = $xml.CreateElement("add")
+        $rule.SetAttribute("accessType", $accessType)
+        if ($users -ne "") { $rule.SetAttribute("users",       $users) }
+        if ($roles -ne "") { $rule.SetAttribute("roles",       $roles) }
+        $rule.SetAttribute("permissions", $perms)
+        return $rule
+    }
+
+    # Regla 1: Anonimo solo lectura  (users="?" en IIS = anonimo)
+    $authNode.AppendChild((New-AuthRule $xmlAuth "Allow" "?" "" "Read")) | Out-Null
+
+    # Regla 2: Grupos autenticados lectura+escritura
+    $authNode.AppendChild((New-AuthRule $xmlAuth "Allow" "" "reprobados,recursadores" "Read, Write")) | Out-Null
+
+    # Regla 3: Denegar al resto
+    $authNode.AppendChild((New-AuthRule $xmlAuth "Deny" "*" "" "Read, Write")) | Out-Null
+
+    $xmlAuth.Save($cfgAuth)
+    Write-Host "  Reglas de autorizacion escritas correctamente." -ForegroundColor Green
 
     # Grupos locales de Windows
     $adsi = [ADSI]"WinNT://$env:ComputerName"
