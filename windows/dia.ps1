@@ -7,23 +7,23 @@ Import-Module WebAdministration -ErrorAction Stop
 $adminGroup = (New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")).Translate(
     [System.Security.Principal.NTAccount]).Value
 
-Write-Host "=================================================" 
-Write-Host "  FIX FTP v2" 
+Write-Host "=================================================" -ForegroundColor Cyan
+Write-Host "  FIX FTP v2" -ForegroundColor Cyan
 Write-Host "================================================="
 
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 # PASO 0: Detener servicios PRIMERO para liberar el lock del XML
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 Write-Host "`n[0] Deteniendo servicios..." -ForegroundColor White
 Stop-Service ftpsvc -Force -ErrorAction SilentlyContinue
 Stop-Service W3SVC  -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 4
 Write-Host "  OK" -ForegroundColor Green
 
-# ─────────────────────────────────────────────────────────────────
-# PASO 1: Limpiar XML — eliminar TODOS los <location path="FTP">
+# -----------------------------------------------------------------
+# PASO 1: Limpiar XML - eliminar TODOS los <location path="FTP">
 # y reescribir uno solo limpio
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 Write-Host "`n[1] Limpiando applicationHost.config..." -ForegroundColor White
 
 $cfg = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
@@ -91,9 +91,9 @@ $xml.configuration.AppendChild($locNode) | Out-Null
 $xml.Save($cfg)
 Write-Host "  XML guardado OK" -ForegroundColor Green
 
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 # PASO 2: Iniciar servicios
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 Write-Host "`n[2] Iniciando servicios..." -ForegroundColor White
 Start-Service W3SVC  -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3
@@ -101,9 +101,9 @@ Start-Service ftpsvc -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 Write-Host "  OK" -ForegroundColor Green
 
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 # PASO 3: Configurar IIS via cmdlets (ahora que el XML esta limpio)
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 Write-Host "`n[3] Configurando IIS..." -ForegroundColor White
 
 # Autenticacion
@@ -127,9 +127,9 @@ Set-WebConfigurationProperty `
 
 Write-Host "  OK" -ForegroundColor Green
 
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 # PASO 4: Permisos NTFS
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 Write-Host "`n[4] Aplicando permisos NTFS..." -ForegroundColor White
 
 # Directorios
@@ -177,9 +177,9 @@ foreach ($g in @("reprobados","recursadores")) {
 
 Write-Host "  OK" -ForegroundColor Green
 
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 # PASO 5: Recrear symlinks de todos los usuarios
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 Write-Host "`n[5] Recreando symlinks de usuarios..." -ForegroundColor White
 
 Get-ChildItem "C:\FTP\LocalUser" -Directory |
@@ -234,9 +234,9 @@ Get-ChildItem "C:\FTP\LocalUser" -Directory |
 }
 Write-Host "  OK" -ForegroundColor Green
 
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 # PASO 6: Arrancar el sitio FTP
-# ─────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------
 Write-Host "`n[6] Arrancando sitio FTP..." -ForegroundColor White
 
 $appcmd = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
@@ -248,7 +248,7 @@ $color = if ($site.State -eq "Started") { "Green" } else { "Red" }
 Write-Host "  Estado del sitio: $($site.State)" -ForegroundColor $color
 
 Write-Host "`n=================================================" -ForegroundColor Cyan
-Write-Host "  LISTO — Conexion desde FileZilla:" -ForegroundColor White
+Write-Host "  LISTO - Conexion desde FileZilla:" -ForegroundColor White
 Write-Host "  Protocolo : FTP (no SFTP)"
 Write-Host "  Cifrado   : FTP plano (inseguro)"
 Write-Host "  Anonimo   : usuario=anonymous  password=(vacio)"
