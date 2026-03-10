@@ -487,9 +487,12 @@ function Initialize-ServidorFTP {
         }
     }
 
-    # Reiniciar sitio FTP y servicio para aplicar cambios de SSL
-    Restart-WebItem "IIS:\Sites\FTP"
-    Restart-Service ftpsvc -Force
+    # Iniciar servicios (ya estaban detenidos desde paso 7)
+    # Usar Start-Service en vez de Restart para evitar colgar cuando el servicio esta detenido
+    Start-Service W3SVC  -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    Start-Service ftpsvc -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
     Write-Host "  OK" -ForegroundColor Green
 
     Write-Host ""
