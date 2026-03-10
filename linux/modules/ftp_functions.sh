@@ -131,9 +131,13 @@ inicializar_sistema() {
     echo "[4/7] Aplicando permisos base y ACLs heredables en /srv/ftp..."
 
     sudo chown root:ftp-users /srv/ftp/general
-    sudo chmod 2770 /srv/ftp/general
+    # 2775: "other" tiene r-x para que el anonimo pueda entrar y listar.
+    # El bind-mount ro impide escritura aunque other tenga r-x.
+    sudo chmod 2775 /srv/ftp/general
     aplicar_acl_heredable /srv/ftp/general "g:ftp-users" "rwx"
     aplicar_acl_heredable /srv/ftp/general "u:root"      "rwx"
+    # other:r-x con default -> herencia indefinida para subdirectorios
+    aplicar_acl_heredable /srv/ftp/general "other" "r-x"
 
     sudo chown root:reprobados /srv/ftp/groups/reprobados
     sudo chmod 2770 /srv/ftp/groups/reprobados
@@ -158,6 +162,11 @@ inicializar_sistema() {
     sudo mount --bind /srv/ftp/general /srv/ftp/anonymous/general
     sudo mount -o remount,ro,bind /srv/ftp/anonymous/general
 
+    # El punto de montaje debe ser accesible por other (r-x) para que
+    # vsftpd pueda servir el listado al usuario anonimo
+    sudo chmod 755 /srv/ftp/anonymous/general
+
+    # public_content_t = lectura publica sin escritura (correcto para anonimo ro)
     sudo chcon -R -t public_content_t /srv/ftp/anonymous &>/dev/null
 
     # fstab: usar printf con un solo espacio entre campos para evitar parse errors
@@ -253,8 +262,8 @@ _configurar_home() {
     sudo chown root:root "$home"
     sudo chmod 755 "$home"
 
-    # Carpeta personal: solo el dueno, permisos heredables indefinidos
-    sudo chown "${user}:${user}" "${home}/${user}"
+    # Carpeta personal: dueno=usuario, grupo=ftp-users (grupo primario del usuario)
+    sudo chown "${user}:ftp-users" "${home}/${user}"
     sudo chmod 700 "${home}/${user}"
     aplicar_acl_heredable "${home}/${user}" "u:${user}" "rwx"
     sudo chcon -R -t user_home_t "${home}/${user}" &>/dev/null
