@@ -352,29 +352,55 @@ function Initialize-ServidorFTP {
     Set-ItemProperty "IIS:\Sites\FTP" `
         -Name ftpServer.Security.authentication.basicAuthentication.enabled -Value $true
 
-    # SSL: forzar SslAllow por los 3 metodos disponibles en IIS
-    # appcmd es el mas confiable — escribe directamente en applicationHost.config
-    $appcmd = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
+    # SSL: deshabilitar completamente en el sitio Y en siteDefaults globales
+    # El error "534 Policy requires SSL" viene de siteDefaults cuando el sitio
+    # no tiene valor explicito — hay que sobreescribir AMBOS lugares.
+    $appcmd  = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
+    $cfgPath = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
+
+    # Paso 1: appcmd sobre el sitio especifico
     & $appcmd set site "FTP" /ftpServer.security.ssl.controlChannelPolicy:SslAllow | Out-Null
     & $appcmd set site "FTP" /ftpServer.security.ssl.dataChannelPolicy:SslAllow    | Out-Null
 
-    # Set-ItemProperty como respaldo
+    # Paso 2: appcmd sobre siteDefaults (configuracion global que hereda el sitio)
+    & $appcmd set config /section:system.applicationHost/sites `
+        /siteDefaults.ftpServer.security.ssl.controlChannelPolicy:SslAllow | Out-Null
+    & $appcmd set config /section:system.applicationHost/sites `
+        /siteDefaults.ftpServer.security.ssl.dataChannelPolicy:SslAllow    | Out-Null
+
+    # Paso 3: Set-ItemProperty como respaldo adicional
     Set-ItemProperty "IIS:\Sites\FTP" `
         -Name "ftpServer.security.ssl.controlChannelPolicy" -Value 0
     Set-ItemProperty "IIS:\Sites\FTP" `
         -Name "ftpServer.security.ssl.dataChannelPolicy"    -Value 0
 
-    # Verificar — si aun dice SslRequire, editar el XML directamente
-    $ctrl = (& $appcmd list site "FTP" /text:ftpServer.security.ssl.controlChannelPolicy)
-    if ($ctrl -ne "SslAllow") {
-        $configPath = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
-        $xmlContent = Get-Content $configPath -Raw
-        $xmlContent = $xmlContent -replace 'controlChannelPolicy="SslRequire"', 'controlChannelPolicy="SslAllow"'
-        $xmlContent = $xmlContent -replace 'dataChannelPolicy="SslRequire"',    'dataChannelPolicy="SslAllow"'
-        $xmlContent = $xmlContent -replace 'controlChannelPolicy="SslRequireCredentialsOnly"', 'controlChannelPolicy="SslAllow"'
-        Set-Content -Path $configPath -Value $xmlContent -Encoding UTF8
-        Write-Host "  [!] SSL forzado via edicion directa de applicationHost.config" -ForegroundColor Yellow
+    # Paso 4: edicion directa del XML — reemplaza CUALQUIER variante de SslRequire
+    # en todo el archivo, tanto en <site> como en <siteDefaults>
+    [xml]$xml = Get-Content $cfgPath
+    $ns = @{}
+
+    # Parchear siteDefaults
+    $sitesNode = $xml.configuration."system.applicationHost".sites
+    if ($sitesNode.siteDefaults.ftpServer.security.ssl) {
+        $sitesNode.siteDefaults.ftpServer.security.ssl.controlChannelPolicy = "SslAllow"
+        $sitesNode.siteDefaults.ftpServer.security.ssl.dataChannelPolicy    = "SslAllow"
     }
+
+    # Parchear el sitio FTP especifico
+    $ftpSite = $sitesNode.site | Where-Object { $_.name -eq "FTP" }
+    if ($ftpSite -and $ftpSite.ftpServer.security.ssl) {
+        $ftpSite.ftpServer.security.ssl.controlChannelPolicy = "SslAllow"
+        $ftpSite.ftpServer.security.ssl.dataChannelPolicy    = "SslAllow"
+    }
+    $xml.Save($cfgPath)
+
+    # Paso 5: reemplazo de texto como ultimo recurso (cubre cualquier caso restante)
+    $raw = Get-Content $cfgPath -Raw
+    $raw = $raw -replace 'controlChannelPolicy="SslRequire[^"]*"', 'controlChannelPolicy="SslAllow"'
+    $raw = $raw -replace 'dataChannelPolicy="SslRequire[^"]*"',    'dataChannelPolicy="SslAllow"'
+    Set-Content $cfgPath $raw -Encoding UTF8
+
+    Write-Host "  SSL configurado como SslAllow (sin cifrado requerido)." -ForegroundColor Green
 
     Write-Host "  OK" -ForegroundColor Green
 
