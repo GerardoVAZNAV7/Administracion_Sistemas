@@ -352,11 +352,32 @@ function Initialize-ServidorFTP {
     Set-ItemProperty "IIS:\Sites\FTP" `
         -Name ftpServer.Security.authentication.basicAuthentication.enabled -Value $true
 
-    # SSL: no requerido (politica 0 = Allow)
+    # SSL: deshabilitado completamente (SslAllow=0, pero forzamos via XML tambien)
+    # 0 = SslAllow, 1 = SslRequire, 2 = SslRequireCredentialsOnly, 3 = SslDeny
     Set-ItemProperty "IIS:\Sites\FTP" `
         -Name "ftpServer.security.ssl.controlChannelPolicy" -Value 0
     Set-ItemProperty "IIS:\Sites\FTP" `
         -Name "ftpServer.security.ssl.dataChannelPolicy"    -Value 0
+
+    # Forzar SSL=Allow directamente en applicationHost.config
+    # (resuelve el error "534 Policy requires SSL" cuando IIS ignora Set-ItemProperty)
+    $configPath = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
+    $xml = [xml](Get-Content $configPath)
+    $site = $xml.configuration."system.applicationHost".sites.site |
+        Where-Object { $_.name -eq "FTP" }
+    if ($site) {
+        $ssl = $site.ftpServer.security.ssl
+        if ($ssl) {
+            $ssl.controlChannelPolicy = "SslAllow"
+            $ssl.dataChannelPolicy    = "SslAllow"
+        }
+        $xml.Save($configPath)
+    }
+
+    # Alternativa via appcmd por si el XML falla
+    & "$env:SystemRoot\System32\inetsrv\appcmd.exe" set site "FTP" `
+        /ftpServer.security.ssl.controlChannelPolicy:SslAllow `
+        /ftpServer.security.ssl.dataChannelPolicy:SslAllow 2>$null
 
     Write-Host "  OK" -ForegroundColor Green
 
