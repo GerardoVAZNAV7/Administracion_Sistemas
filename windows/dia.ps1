@@ -111,6 +111,10 @@
 # Ejecutar como Administrador en el servidor
 # Corrige todos los problemas detectados en el diagnostico
 
+# fix_ftp.ps1
+# Ejecutar como Administrador en el servidor
+# Corrige todos los problemas detectados en el diagnostico
+
 Import-Module WebAdministration -ErrorAction Stop
 
 Write-Host "=================================================" -ForegroundColor Cyan
@@ -286,45 +290,31 @@ if ($ftpSite -and $ftpSite.ftpServer.security.ssl) {
     $ftpSite.ftpServer.security.ssl.dataChannelPolicy    = "SslAllow"
 }
 
-# Limpiar TODAS las reglas de autorizacion duplicadas del XML directamente
-# (Get-WebConfiguration falla porque hay duplicados — los borramos a mano)
-$allLocations = $xml.configuration.location
-foreach ($loc in $allLocations) {
-    if ($loc.path -eq "FTP") {
-        $ftpNode = $loc."system.ftpServer"
-        if ($ftpNode) {
-            $secNode = $ftpNode.security
-            if ($secNode) {
-                $authNode = $secNode.authorization
-                if ($authNode) { $authNode.RemoveAll() }
-            }
-        }
+# Eliminar TODOS los nodos <location path="FTP"> existentes (pueden ser multiples/duplicados)
+# Recolectar primero para evitar modificar la coleccion mientras se itera
+$locNodesToRemove = @()
+foreach ($loc in $xml.configuration.ChildNodes) {
+    if ($loc.LocalName -eq "location" -and $loc.GetAttribute("path") -eq "FTP") {
+        $locNodesToRemove += $loc
     }
 }
+foreach ($loc in $locNodesToRemove) {
+    $xml.configuration.RemoveChild($loc) | Out-Null
+}
+Write-Host "  Nodos location FTP eliminados: $($locNodesToRemove.Count)" -ForegroundColor DarkGray
 
-# Buscar o crear <location path="FTP">
-$locNode = $xml.configuration.location | Where-Object { $_.path -eq "FTP" }
-if (-not $locNode) {
-    $locNode = $xml.CreateElement("location")
-    $locNode.SetAttribute("path", "FTP")
-    $xml.configuration.AppendChild($locNode) | Out-Null
-}
+# Crear un unico nodo <location path="FTP"> limpio
+$locNode = $xml.CreateElement("location")
+$locNode.SetAttribute("path", "FTP")
+$xml.configuration.AppendChild($locNode) | Out-Null
 
-# Asegurar jerarquia
-if (-not $locNode."system.ftpServer") {
-    $locNode.AppendChild($xml.CreateElement("system.ftpServer")) | Out-Null
-}
-if (-not $locNode."system.ftpServer".security) {
-    $locNode."system.ftpServer".AppendChild($xml.CreateElement("security")) | Out-Null
-}
-
-$authNode = $locNode."system.ftpServer".security.authorization
-if ($authNode) {
-    $authNode.RemoveAll()
-} else {
-    $authNode = $xml.CreateElement("authorization")
-    $locNode."system.ftpServer".security.AppendChild($authNode) | Out-Null
-}
+# Crear jerarquia system.ftpServer/security/authorization
+$ftpNode  = $xml.CreateElement("system.ftpServer")
+$secNode  = $xml.CreateElement("security")
+$authNode = $xml.CreateElement("authorization")
+$secNode.AppendChild($authNode)  | Out-Null
+$ftpNode.AppendChild($secNode)   | Out-Null
+$locNode.AppendChild($ftpNode)   | Out-Null
 
 function New-AuthRule($aType, $users, $roles, $perms) {
     $r = $xml.CreateElement("add")
