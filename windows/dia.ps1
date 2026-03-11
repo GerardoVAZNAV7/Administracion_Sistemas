@@ -257,25 +257,33 @@
 # Pega esto en PowerShell del servidor
 
 # 1. Ver por que falla al arrancar
-$appcmd = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
-& $appcmd start site /site.name:"FTP"
+# $appcmd = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
+# & $appcmd start site /site.name:"FTP"
 
-# 2. Ver el log de eventos de IIS
-Get-EventLog -LogName System -Source "*IIS*","*ftpsvc*","*W3SVC*" -Newest 10 |
-    Select-Object TimeGenerated, EntryType, Message | Format-List
+# # 2. Ver el log de eventos de IIS
+# Get-EventLog -LogName System -Source "*IIS*","*ftpsvc*","*W3SVC*" -Newest 10 |
+#     Select-Object TimeGenerated, EntryType, Message | Format-List
 
-# 3. Ver el log de eventos de aplicacion
-Get-EventLog -LogName Application -Source "*IIS*","*ftp*" -Newest 5 |
-    Select-Object TimeGenerated, EntryType, Message | Format-List
+# # 3. Ver el log de eventos de aplicacion
+# Get-EventLog -LogName Application -Source "*IIS*","*ftp*" -Newest 5 |
+#     Select-Object TimeGenerated, EntryType, Message | Format-List
 
-# 4. Ver el ultimo log FTP
-$logPath = "C:\inetpub\logs\LogFiles"
-$lastLog = Get-ChildItem $logPath -Recurse -Filter "*.log" -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if ($lastLog) {
-    Write-Host "Log: $($lastLog.FullName)"
-    Get-Content $lastLog.FullName -Tail 20
-}
+# # 4. Ver el ultimo log FTP
+# $logPath = "C:\inetpub\logs\LogFiles"
+# $lastLog = Get-ChildItem $logPath -Recurse -Filter "*.log" -ErrorAction SilentlyContinue |
+#     Sort-Object LastWriteTime -Descending | Select-Object -First 1
+# if ($lastLog) {
+#     Write-Host "Log: $($lastLog.FullName)"
+#     Get-Content $lastLog.FullName -Tail 20
+# }
 
-# 5. Estado de los servicios
-Get-Service W3SVC, ftpsvc | Select-Object Name, Status, StartType
+# # 5. Estado de los servicios
+# Get-Service W3SVC, ftpsvc | Select-Object Name, Status, StartType
+# Ver TODOS los sitios en IIS y sus bindings
+Import-Module WebAdministration
+Get-WebSite | Select-Object Name, State, PhysicalPath, 
+    @{N="Bindings";E={($_.Bindings.Collection | ForEach-Object {$_.bindingInformation}) -join ", "}} |
+    Format-List
+
+# Ver todos los sitios FTP especificamente
+Get-WebSite | Where-Object { $_.Bindings.Collection.protocol -eq "ftp" } | Format-List
