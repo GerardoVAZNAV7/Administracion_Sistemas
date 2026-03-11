@@ -280,10 +280,29 @@
 # # 5. Estado de los servicios
 # Get-Service W3SVC, ftpsvc | Select-Object Name, Status, StartType
 # Ver TODOS los sitios en IIS y sus bindings
-Import-Module WebAdministration
-Get-WebSite | Select-Object Name, State, PhysicalPath, 
-    @{N="Bindings";E={($_.Bindings.Collection | ForEach-Object {$_.bindingInformation}) -join ", "}} |
-    Format-List
+# Import-Module WebAdministration
+# Get-WebSite | Select-Object Name, State, PhysicalPath, 
+#     @{N="Bindings";E={($_.Bindings.Collection | ForEach-Object {$_.bindingInformation}) -join ", "}} |
+#     Format-List
 
-# Ver todos los sitios FTP especificamente
-Get-WebSite | Where-Object { $_.Bindings.Collection.protocol -eq "ftp" } | Format-List
+# # Ver todos los sitios FTP especificamente
+# Get-WebSite | Where-Object { $_.Bindings.Collection.protocol -eq "ftp" } | Format-List
+# Detener y eliminar el sitio que roba el puerto 21
+Import-Module WebAdministration
+
+# Detener FTPServer_Practica
+Stop-WebSite -Name "FTPServer_Practica" -ErrorAction SilentlyContinue
+Write-Host "Detenido FTPServer_Practica"
+
+# Eliminarlo
+Remove-WebSite -Name "FTPServer_Practica" -ErrorAction SilentlyContinue
+Write-Host "Eliminado FTPServer_Practica"
+
+# Arrancar tu sitio FTP
+$appcmd = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
+& $appcmd start site /site.name:"FTP"
+Start-Sleep -Seconds 2
+
+# Verificar
+$site = Get-WebSite -Name "FTP"
+Write-Host "Estado FTP: $($site.State)" -ForegroundColor $(if ($site.State -eq "Started") {"Green"} else {"Red"})
