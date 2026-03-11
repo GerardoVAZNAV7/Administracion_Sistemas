@@ -89,30 +89,31 @@ Function Set-FtpAuthRules {
     $Filter = "/system.ftpServer/security/authorization"
     $Path = "IIS:\Sites\FTP"
 
-    # 1. Definimos las reglas
     $Reglas = @(
         @{accessType="Allow"; users="anonimo"; roles=""; permissions="Read"},
         @{accessType="Allow"; users=""; roles="Reprobados,Recursadores"; permissions="Read,Write"},
         @{accessType="Deny";  users="*"; roles=""; permissions="Read,Write"}
     )
 
-    # 2. Limpiar TODAS las reglas locales del sitio para evitar duplicados
-    # Usamos -Location para asegurar que afecte solo al sitio FTP
-    Clear-WebConfiguration -Filter $Filter -PSPath $Path -ErrorAction SilentlyContinue
-
-    # 3. Agregar cada regla directamente
     foreach ($r in $Reglas) {
-        try {
-            Add-WebConfiguration -Filter $Filter -PSPath $Path -Value $r -ErrorAction Stop
-        } catch {
-            Write-Host "  [Nota] Regla ya existente o error: $($_.Exception.Message)" -ForegroundColor Gray
+        # Buscamos si ya existe una regla con esos mismos usuarios o roles
+        $existe = Get-WebConfiguration -Filter $Filter -PSPath $Path | Where-Object { 
+            ($_.users -eq $r.users) -and ($_.roles -eq $r.roles) 
+        }
+
+        if (-not $existe) {
+            try {
+                Add-WebConfiguration -Filter $Filter -PSPath $Path -Value $r -ErrorAction Stop
+                Write-Host "    [+] Regla añadida: $($r.users)$($r.roles)" -ForegroundColor Gray
+            } catch {
+                Write-Host "    [!] Error al añadir regla: $($_.Exception.Message)" -ForegroundColor Red
+            }
+        } else {
+            Write-Host "    [~] Regla ya existe, omitiendo..." -ForegroundColor DarkGray
         }
     }
-
     Restart-WebItem $Path
-    Write-Host "  [OK] Reglas aplicadas correctamente." -ForegroundColor Green
 }
-
 
 # ─────────────────────────────────────────────
 #  INSTALACION
