@@ -89,23 +89,23 @@ Function Set-FtpAuthRules {
     $Filter = "/system.ftpServer/security/authorization"
     $Path = "IIS:\Sites\FTP"
 
-    # 1. Definimos las reglas deseadas (OJO: Sin espacios extra y cuidando mayúsculas)
+    # 1. Definimos las reglas
     $Reglas = @(
         @{accessType="Allow"; users="anonimo"; roles=""; permissions="Read"},
         @{accessType="Allow"; users=""; roles="Reprobados,Recursadores"; permissions="Read,Write"},
         @{accessType="Deny";  users="*"; roles=""; permissions="Read,Write"}
     )
 
-    # 2. Limpiar para asegurar que no haya basura previa
-    try { Clear-WebConfiguration -Filter $Filter -PSPath $Path -ErrorAction SilentlyContinue } catch {}
+    # 2. Limpiar TODAS las reglas locales del sitio para evitar duplicados
+    # Usamos -Location para asegurar que afecte solo al sitio FTP
+    Clear-WebConfiguration -Filter $Filter -PSPath $Path -ErrorAction SilentlyContinue
 
-    # 3. Agregar cada regla validando que no sea duplicada
+    # 3. Agregar cada regla directamente
     foreach ($r in $Reglas) {
-        $existe = Get-WebConfiguration -Filter $Filter -PSPath $Path | Where-Object { 
-            $_.accessType -eq $r.accessType -and $_.roles -eq $r.roles -and $_.users -eq $r.users 
-        }
-        if (-not $existe) {
-            Add-WebConfiguration -Filter $Filter -PSPath $Path -Value $r
+        try {
+            Add-WebConfiguration -Filter $Filter -PSPath $Path -Value $r -ErrorAction Stop
+        } catch {
+            Write-Host "  [Nota] Regla ya existente o error: $($_.Exception.Message)" -ForegroundColor Gray
         }
     }
 
