@@ -1,12 +1,11 @@
 #!/bin/bash
 
-# Se carga el archivo de funciones locales
 source ./http_functions.sh
 
 # Validar que somos root
 if [ "$EUID" -ne 0 ]; then
-  echo "Por favor, ejecuta este script como root (sudo)."
-  exit 1
+    echo "Por favor, ejecuta este script como root (sudo)."
+    exit 1
 fi
 
 instalar_dependencias_base
@@ -14,8 +13,9 @@ instalar_dependencias_base
 while true; do
     echo "========================================="
     echo "   Aprovisionamiento HTTP Multi-Versión  "
+    echo "          Fedora Server 42               "
     echo "========================================="
-    echo "1. Apache2"
+    echo "1. Apache (httpd)"
     echo "2. Nginx"
     echo "3. Tomcat"
     echo "4. Limpiar entorno (Liberar puertos)"
@@ -32,18 +32,15 @@ while true; do
 
     # Mapeo de la selección al nombre del servicio
     case $opcion in
-        1) servicio="apache2" ;;
-        2) servicio="nginx" ;;
+        1) servicio="apache2"  ;;
+        2) servicio="nginx"    ;;
         3) servicio="tomcat10" ;;
         *) echo "Opción inválida."; continue ;;
     esac
 
-    # Llamada a la función de puerto validada
     puerto=$(solicitarPuerto)
 
-    echo "Consultando versiones disponibles para $servicio..."
-    
-   echo "Consultando versiones disponibles en los repositorios de Debian..."
+    echo "Consultando versiones disponibles para $servicio en los repositorios de Fedora 42..."
     version_elegida=$(seleccionar_version "$servicio")
 
     if [[ -z "$version_elegida" ]]; then
@@ -51,11 +48,10 @@ while true; do
         continue
     fi
 
-    # Ejecutar la instalación silenciosa según el servicio
     case $servicio in
-        "apache2") instalar_apache "$version_elegida" "$puerto" ;;
-        "nginx")   instalar_nginx "$version_elegida" "$puerto" ;;
-        "tomcat10") instalar_tomcat "$version_elegida" "$puerto" ;;
+        "apache2")  instalar_apache  "$version_elegida" "$puerto" ;;
+        "nginx")    instalar_nginx   "$version_elegida" "$puerto" ;;
+        "tomcat10") instalar_tomcat  "$version_elegida" "$puerto" ;;
     esac
 
     read -p "¿Deseas realizar otra acción? (s/n): " continuar
