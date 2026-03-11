@@ -85,27 +85,32 @@ Function Set-UserRootPermissions {
 }
 
 Function Set-FtpAuthRules {
-    Write-Host "  Aplicando reglas de autorizacion seguras..." -ForegroundColor Cyan
+    Write-Host "  Configurando reglas de autorizacion..." -ForegroundColor Cyan
+    $Filter = "/system.ftpServer/security/authorization"
+    $Path = "IIS:\Sites\FTP"
 
-    # 1. Limpiar reglas existentes para el sitio FTP
-    Clear-WebConfiguration -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\FTP"
+    # 1. Definimos las reglas deseadas (OJO: Sin espacios extra y cuidando mayúsculas)
+    $Reglas = @(
+        @{accessType="Allow"; users="anonimo"; roles=""; permissions="Read"},
+        @{accessType="Allow"; users=""; roles="Reprobados,Recursadores"; permissions="Read,Write"},
+        @{accessType="Deny";  users="*"; roles=""; permissions="Read,Write"}
+    )
 
-    # 2. Permitir a los grupos (Cuidando MAYUSCULAS para que coincidan con tus grupos)
-    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" `
-        -Value @{accessType="Allow"; roles="Reprobados,Recursadores"; permissions="Read,Write"} `
-        -PSPath "IIS:\Sites\FTP"
+    # 2. Limpiar para asegurar que no haya basura previa
+    try { Clear-WebConfiguration -Filter $Filter -PSPath $Path -ErrorAction SilentlyContinue } catch {}
 
-    # 3. Permitir anonimo (si realmente lo necesitas)
-    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" `
-        -Value @{accessType="Allow"; users="anonimo"; permissions="Read"} `
-        -PSPath "IIS:\Sites\FTP"
+    # 3. Agregar cada regla validando que no sea duplicada
+    foreach ($r in $Reglas) {
+        $existe = Get-WebConfiguration -Filter $Filter -PSPath $Path | Where-Object { 
+            $_.accessType -eq $r.accessType -and $_.roles -eq $r.roles -and $_.users -eq $r.users 
+        }
+        if (-not $existe) {
+            Add-WebConfiguration -Filter $Filter -PSPath $Path -Value $r
+        }
+    }
 
-    # 4. Denegar el resto
-    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" `
-        -Value @{accessType="Deny"; users="*"; permissions="Read,Write"} `
-        -PSPath "IIS:\Sites\FTP"
-
-    Restart-WebItem "IIS:\Sites\FTP"
+    Restart-WebItem $Path
+    Write-Host "  [OK] Reglas aplicadas correctamente." -ForegroundColor Green
 }
 
 
@@ -139,6 +144,12 @@ Function Install-FtpDaemon {
         } else {
             Write-Host "  [OK] Firewall '$($rule.Name)' ya existe." -ForegroundColor DarkGray
         }
+        # Dar permiso de lectura/ejecución al motor de IIS en la raíz y LocalUser
+icacls "C:\FTP" /grant "IIS_IUSRS:(RX)" /T
+icacls "C:\FTP\LocalUser" /grant "IIS_IUSRS:(RX)" /T
+
+# MUY IMPORTANTE: Para IsolateAllDirectories, la carpeta debe llamarse EXACTAMENTE igual al usuario
+# Asegúrate de que C:\FTP\LocalUser\pedro exista.
     }
 
     # Crear estructura de directorios
