@@ -4,16 +4,6 @@
 # Ubicacion: linux/modules/ftp_functions.sh
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# VALIDACION Y CAPTURA
-#
-# CRITICO: Las funciones capturar_* NO devuelven valores con "echo/$()"
-# porque eso crea una subshell que rompe el "read" interactivo.
-# En cambio escriben el resultado en variables globales:
-#   _RESULT_USUARIO  _RESULT_PASS  _RESULT_GRUPO
-# El llamador lee la variable despues de invocar la funcion directamente.
-# -----------------------------------------------------------------------------
-
 validar_contrasena() {
     local pass="$1"
     local ok=true
@@ -28,7 +18,6 @@ validar_contrasena() {
     [[ "$ok" == "true" ]] && return 0 || return 1
 }
 
-# Escribe resultado en: $_RESULT_PASS
 capturar_contrasena() {
     _RESULT_PASS=""
     local pass
@@ -53,7 +42,6 @@ validar_nombre_usuario() {
     return 0
 }
 
-# Escribe resultado en: $_RESULT_USUARIO
 capturar_usuario_valido() {
     local prompt="$1"
     _RESULT_USUARIO=""
@@ -67,7 +55,6 @@ capturar_usuario_valido() {
     done
 }
 
-# Escribe resultado en: $_RESULT_GRUPO
 capturar_grupo_ftp() {
     _RESULT_GRUPO=""
     local opcion
@@ -84,26 +71,50 @@ capturar_grupo_ftp() {
     done
 }
 
-# -----------------------------------------------------------------------------
-# HELPER: ACLs heredables
-# setfacl -R    aplica a todo lo existente ahora
-# setfacl -R -d establece default ACL -> cualquier archivo/dir creado DENTRO
-#               hereda automaticamente, incluyendo subdirectorios que a su vez
-#               propagaran la default -> herencia indefinida sin limite
-# -----------------------------------------------------------------------------
-
 aplicar_acl_heredable() {
     local ruta="$1"
-    local entidad="$2"   # "u:nombre" o "g:grupo"
-    local permisos="$3"  # "rwx", "r-x", etc.
+    local entidad="$2"
+    local permisos="$3"
 
     sudo setfacl -R    -m "${entidad}:${permisos}" "$ruta"
     sudo setfacl -R -d -m "${entidad}:${permisos}" "$ruta"
 }
 
 # -----------------------------------------------------------------------------
-# CONFIGURACION INICIAL (idempotente)
+# PROTEGER CARPETAS PRINCIPALES (anti-rename/delete)
+# chattr +i sobre la carpeta: impide renombrar, mover o borrar el directorio
+# aunque el usuario tenga rwx en el padre. Solo root puede quitar +i.
+# Se aplica SOLO al directorio en si, no recursivo (-R), para no bloquear
+# la escritura de archivos dentro de el.
 # -----------------------------------------------------------------------------
+
+proteger_carpetas_usuario() {
+    local user="$1"
+    local group="$2"
+    local home="/home/$user"
+
+    # Quitar inmutabilidad primero (por idempotencia al reconfigurar)
+    sudo chattr -i "${home}/${user}"   2>/dev/null
+    sudo chattr -i "${home}/general"   2>/dev/null
+    sudo chattr -i "${home}/${group}"  2>/dev/null
+
+    # Aplicar inmutabilidad solo al directorio (no a su contenido)
+    sudo chattr +i "${home}/${user}"
+    sudo chattr +i "${home}/general"
+    sudo chattr +i "${home}/${group}"
+
+    echo "  [OK] Carpetas protegidas contra renombrado/eliminacion."
+}
+
+desproteger_carpetas_usuario() {
+    local user="$1"
+    local group="$2"
+    local home="/home/$user"
+
+    sudo chattr -i "${home}/${user}"   2>/dev/null
+    sudo chattr -i "${home}/general"   2>/dev/null
+    sudo chattr -i "${home}/${group}"  2>/dev/null
+}
 
 inicializar_sistema() {
     echo ""
@@ -131,13 +142,10 @@ inicializar_sistema() {
     echo "[4/7] Aplicando permisos base y ACLs heredables en /srv/ftp..."
 
     sudo chown root:ftp-users /srv/ftp/general
-    # 2775: "other" tiene r-x para que el anonimo pueda entrar y listar.
-    # El bind-mount ro impide escritura aunque other tenga r-x.
     sudo chmod 2775 /srv/ftp/general
     aplicar_acl_heredable /srv/ftp/general "g:ftp-users" "rwx"
     aplicar_acl_heredable /srv/ftp/general "u:root"      "rwx"
-    # other:r-x con default -> herencia indefinida para subdirectorios
-    aplicar_acl_heredable /srv/ftp/general "other" "r-x"
+    aplicar_acl_heredable /srv/ftp/general "other"       "r-x"
 
     sudo chown root:reprobados /srv/ftp/groups/reprobados
     sudo chmod 2770 /srv/ftp/groups/reprobados
@@ -161,15 +169,9 @@ inicializar_sistema() {
     fi
     sudo mount --bind /srv/ftp/general /srv/ftp/anonymous/general
     sudo mount -o remount,ro,bind /srv/ftp/anonymous/general
-
-    # El punto de montaje debe ser accesible por other (r-x) para que
-    # vsftpd pueda servir el listado al usuario anonimo
     sudo chmod 755 /srv/ftp/anonymous/general
-
-    # public_content_t = lectura publica sin escritura (correcto para anonimo ro)
     sudo chcon -R -t public_content_t /srv/ftp/anonymous &>/dev/null
 
-    # fstab: usar printf con un solo espacio entre campos para evitar parse errors
     if ! grep -qF "/srv/ftp/anonymous/general" /etc/fstab; then
         printf '%s\n' "/srv/ftp/general /srv/ftp/anonymous/general none bind,ro 0 0" \
             | sudo tee -a /etc/fstab > /dev/null
@@ -200,9 +202,9 @@ VSFTPD_EOF
     echo "  OK"
 
     echo "[7/7] Configurando Firewall y SELinux..."
-    sudo firewall-cmd --permanent --add-service=ftp        &>/dev/null
+    sudo firewall-cmd --permanent --add-service=ftp          &>/dev/null
     sudo firewall-cmd --permanent --add-port=40000-40010/tcp &>/dev/null
-    sudo firewall-cmd --reload                              &>/dev/null
+    sudo firewall-cmd --reload                                &>/dev/null
 
     sudo setsebool -P ftpd_full_access on &>/dev/null
     sudo setsebool -P tftp_home_dir    on &>/dev/null
@@ -221,15 +223,7 @@ VSFTPD_EOF
     echo ""
     echo "  Servidor FTP listo."
     echo "================================================="
-    echo "  ACCESOS:"
-    echo "  - anonymous / sin password -> solo lectura en /general"
-    echo "  - usuario autenticado      -> /personal + /general + /grupo"
-    echo "================================================="
 }
-
-# -----------------------------------------------------------------------------
-# CREAR USUARIO
-# -----------------------------------------------------------------------------
 
 crear_usuario() {
     local user="$1"
@@ -254,15 +248,18 @@ _configurar_home() {
     local group="$2"
     local home="/home/$user"
 
+    # Quitar inmutabilidad antes de tocar las carpetas (por idempotencia)
+    desproteger_carpetas_usuario "$user" "$group"
+
     sudo mkdir -p "${home}/${user}"
     sudo mkdir -p "${home}/general"
     sudo mkdir -p "${home}/${group}"
 
-    # Raiz del chroot: root es dueno (vsftpd lo requiere para chroot seguro)
+    # Raiz chroot: root dueno (vsftpd lo requiere)
     sudo chown root:root "$home"
     sudo chmod 755 "$home"
 
-    # Carpeta personal: dueno=usuario, grupo=ftp-users (grupo primario del usuario)
+    # Carpeta personal del usuario
     sudo chown "${user}:ftp-users" "${home}/${user}"
     sudo chmod 700 "${home}/${user}"
     aplicar_acl_heredable "${home}/${user}" "u:${user}" "rwx"
@@ -273,17 +270,15 @@ _configurar_home() {
     sudo umount "${home}/reprobados"    2>/dev/null
     sudo umount "${home}/recursadores"  2>/dev/null
 
-    sudo mount --bind /srv/ftp/general            "${home}/general"
-    sudo mount --bind "/srv/ftp/groups/${group}"  "${home}/${group}"
+    sudo mount --bind /srv/ftp/general           "${home}/general"
+    sudo mount --bind "/srv/ftp/groups/${group}" "${home}/${group}"
 
-    # ACL del usuario sobre los puntos de montaje
     aplicar_acl_heredable "${home}/general"  "u:${user}" "rwx"
     aplicar_acl_heredable "${home}/${group}" "u:${user}" "rwx"
 
     sudo chcon -R -t public_content_rw_t "${home}/general"  &>/dev/null
     sudo chcon -R -t public_content_rw_t "${home}/${group}" &>/dev/null
 
-    # fstab: un espacio entre campos, sin tabulaciones
     local entry_gen="/srv/ftp/general ${home}/general none bind 0 0"
     local entry_grp="/srv/ftp/groups/${group} ${home}/${group} none bind 0 0"
 
@@ -291,11 +286,10 @@ _configurar_home() {
         || printf '%s\n' "$entry_gen" | sudo tee -a /etc/fstab > /dev/null
     grep -qF "$entry_grp" /etc/fstab \
         || printf '%s\n' "$entry_grp" | sudo tee -a /etc/fstab > /dev/null
-}
 
-# -----------------------------------------------------------------------------
-# MODIFICAR GRUPO
-# -----------------------------------------------------------------------------
+    # Proteger las tres carpetas principales contra renombrado/eliminacion
+    proteger_carpetas_usuario "$user" "$group"
+}
 
 modificar_grupo_usuario() {
     local user="$1"
@@ -316,8 +310,10 @@ modificar_grupo_usuario() {
         return 0
     fi
 
+    # Quitar inmutabilidad de la carpeta del grupo viejo para poder desmontarla
     if [[ -n "$old_group" ]]; then
-        sudo umount "${home}/${old_group}" 2>/dev/null
+        sudo chattr -i "${home}/${old_group}" 2>/dev/null
+        sudo umount "${home}/${old_group}"    2>/dev/null
         sudo rm -rf "${home:?}/${old_group}"
         sudo sed -i "\|${home}/${old_group}|d" /etc/fstab
     fi
@@ -333,12 +329,11 @@ modificar_grupo_usuario() {
     grep -qF "$entry_grp" /etc/fstab \
         || printf '%s\n' "$entry_grp" | sudo tee -a /etc/fstab > /dev/null
 
+    # Re-proteger la nueva carpeta de grupo
+    sudo chattr +i "${home}/${new_group}"
+
     echo "  [OK] '$user' movido de '${old_group:-ninguno}' a '$new_group'."
 }
-
-# -----------------------------------------------------------------------------
-# ELIMINAR USUARIO
-# -----------------------------------------------------------------------------
 
 eliminar_usuario() {
     local user="$1"
@@ -349,6 +344,10 @@ eliminar_usuario() {
         return 1
     fi
 
+    # Quitar inmutabilidad antes de eliminar
+    desproteger_carpetas_usuario "$user" "reprobados"
+    desproteger_carpetas_usuario "$user" "recursadores"
+
     sudo umount "${home}/general"       2>/dev/null
     sudo umount "${home}/reprobados"    2>/dev/null
     sudo umount "${home}/recursadores"  2>/dev/null
@@ -358,10 +357,6 @@ eliminar_usuario() {
 
     echo "  [OK] Usuario '$user' eliminado."
 }
-
-# -----------------------------------------------------------------------------
-# LISTAR USUARIOS FTP
-# -----------------------------------------------------------------------------
 
 listar_usuarios_ftp() {
     echo ""
@@ -390,10 +385,6 @@ listar_usuarios_ftp() {
     fi
     echo "------------------------------------------------"
 }
-
-# -----------------------------------------------------------------------------
-# VERIFICAR SERVICIO
-# -----------------------------------------------------------------------------
 
 verificar_servicio_ftp() {
     echo ""
