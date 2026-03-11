@@ -327,37 +327,44 @@
 # icacls "C:\FTP\LocalUser\Public"
 
 # # Ver permisos de C:\FTP\LocalUser\bayer
-# Write-Host "`nPermisos de bayer:"
-# icacls "C:\FTP\LocalUser\bayer"
+# # Write-Host "`nPermisos de bayer:"
+# # icacls "C:\FTP\LocalUser\bayer"
 
-Import-Module WebAdministration
+# Import-Module WebAdministration
 
-# Detener sitio
-Stop-WebSite -Name "FTP" -ErrorAction SilentlyContinue
-Stop-Service ftpsvc -Force -ErrorAction SilentlyContinue
-Stop-Service W3SVC  -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 3
+# # Detener sitio
+# Stop-WebSite -Name "FTP" -ErrorAction SilentlyContinue
+# Stop-Service ftpsvc -Force -ErrorAction SilentlyContinue
+# Stop-Service W3SVC  -Force -ErrorAction SilentlyContinue
+# Start-Sleep -Seconds 3
 
-# Cambiar physicalPath directamente en el XML
-$cfg = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
-[xml]$xml = Get-Content $cfg -Encoding UTF8
-$ftpSite = $xml.configuration."system.applicationHost".sites.site |
-    Where-Object { $_.name -eq "FTP" }
-$ftpSite.application.virtualDirectory.physicalPath = "C:\FTP\LocalUser"
-$xml.Save($cfg)
-Write-Host "physicalPath -> C:\FTP\LocalUser"
+# # Cambiar physicalPath directamente en el XML
+# $cfg = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
+# [xml]$xml = Get-Content $cfg -Encoding UTF8
+# $ftpSite = $xml.configuration."system.applicationHost".sites.site |
+#     Where-Object { $_.name -eq "FTP" }
+# $ftpSite.application.virtualDirectory.physicalPath = "C:\FTP\LocalUser"
+# $xml.Save($cfg)
+# Write-Host "physicalPath -> C:\FTP\LocalUser"
 
-# Arrancar
-Start-Service W3SVC  -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
-Start-Service ftpsvc -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
+# # Arrancar
+# Start-Service W3SVC  -ErrorAction SilentlyContinue
+# Start-Sleep -Seconds 2
+# Start-Service ftpsvc -ErrorAction SilentlyContinue
+# Start-Sleep -Seconds 2
 
-$appcmd = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
-& $appcmd start site /site.name:"FTP" 2>$null
-Start-Sleep -Seconds 1
+# $appcmd = "$env:SystemRoot\System32\inetsrv\appcmd.exe"
+# & $appcmd start site /site.name:"FTP" 2>$null
+# Start-Sleep -Seconds 1
 
-# Verificar
-$site = Get-WebSite -Name "FTP"
-Write-Host "Estado: $($site.State)" -ForegroundColor $(if ($site.State -eq "Started") {"Green"} else {"Red"})
-Write-Host "Path  : $($site.physicalPath)"
+# # Verificar
+# $site = Get-WebSite -Name "FTP"
+# Write-Host "Estado: $($site.State)" -ForegroundColor $(if ($site.State -eq "Started") {"Green"} else {"Red"})
+# Write-Host "Path  : $($site.physicalPath)"
+
+# Ver quien escucha en puerto 21 y 22
+netstat -ano | findstr ":21 "
+netstat -ano | findstr ":22 "
+
+# Confirmar estado final
+(Get-WebSite -Name "FTP") | Select-Object Name, State, physicalPath
