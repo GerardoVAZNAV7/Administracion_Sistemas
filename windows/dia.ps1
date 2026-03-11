@@ -843,6 +843,35 @@
 # }
 # Write-Host ""
 # Write-Host "Intenta conectar de nuevo con usuario '$Username'." -ForegroundColor Cyan
-# repair_bills.ps1 — ejecutar como Administrador
-. "C:\ruta\a\ftp_functions.ps1"   # ajusta la ruta
-Repair-FtpUser -Username "bills"
+# # repair_bills.ps1 — ejecutar como Administrador
+# . "C:\ruta\a\ftp_functions.ps1"   # ajusta la ruta
+# Repair-FtpUser -Username "bills"
+# Importar módulo de administración de IIS
+Import-Module WebAdministration
+
+Write-Host "--- Iniciando limpieza de entorno FTP ---" -ForegroundColor Cyan
+
+# 1. Detener el servicio FTP para evitar bloqueos de archivos
+Stop-Service ftpsvc -ErrorAction SilentlyContinue
+
+# 2. Eliminar todos los sitios que usen protocolo FTP
+$ftpSites = Get-ChildItem "IIS:\Sites" | Where-Object { $_.bindings.protocol -eq "ftp" }
+foreach ($site in $ftpSites) {
+    Remove-WebSite -Name $site.Name
+    Write-Host "[OK] Sitio eliminado: $($site.Name)" -ForegroundColor Yellow
+}
+
+# 3. Limpiar reglas de autorización globales (Previene errores de duplicados)
+# Esto limpia la sección que causaba el error en ftp_functions.ps1
+$filter = "/system.ftpServer/security/authorization"
+Clear-WebConfiguration -Filter $filter -PSPath "IIS:\"
+Write-Host "[OK] Reglas de autorización globales limpiadas." -ForegroundColor Yellow
+
+# 4. Opcional: Eliminar grupos locales de Windows (Recursadores y Reprobados)
+# Solo descomenta estas líneas si quieres borrar también los grupos del sistema
+# net localgroup Recursadores /delete 2>$null
+# net localgroup Reprobados /delete 2>$null
+
+# 5. Reiniciar el servicio
+Start-Service ftpsvc
+Write-Host "--- Entorno limpio y servicio reiniciado ---" -ForegroundColor Green
