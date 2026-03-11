@@ -145,9 +145,17 @@ Function Install-FtpDaemon {
             Write-Host "  [OK] Firewall '$($rule.Name)' ya existe." -ForegroundColor DarkGray
         }
         # Dar permiso de lectura/ejecución al motor de IIS en la raíz y LocalUser
-icacls "C:\FTP" /grant "IIS_IUSRS:(RX)" /T
-icacls "C:\FTP\LocalUser" /grant "IIS_IUSRS:(RX)" /T
+# FtpRootPath — IIS necesita "entrar" aqui (RX sin recursividad profunda)
+    icacls $script:FtpRootPath /grant "IIS_IUSRS:(RX)" | Out-Null
+    
+    # LocalUserPath — Carpeta contenedora de usuarios
+    icacls $script:LocalUserPath /grant "IIS_IUSRS:(RX)" | Out-Null
+    icacls $script:LocalUserPath /grant "Users:(RX)" | Out-Null
 
+    # Importante: Asegurarse que el modo de aislamiento este bien aplicado
+    Set-WebConfigurationProperty `
+        -Filter "/system.applicationHost/sites/site[@name='FTP']/ftpServer/userIsolation" `
+        -Name "mode" -Value "IsolateAllDirectories"
 # MUY IMPORTANTE: Para IsolateAllDirectories, la carpeta debe llamarse EXACTAMENTE igual al usuario
 # Asegúrate de que C:\FTP\LocalUser\pedro exista.
     }
@@ -244,6 +252,8 @@ icacls "C:\FTP\LocalUser" /grant "IIS_IUSRS:(RX)" /T
 
     Write-Host ""
     Write-Host "  [OK] Servidor FTP listo." -ForegroundColor Green
+    # Ejecuta esto en tu consola de PowerShell (cargando el modulo primero)
+    Repair-FtpUser -Username "pedro"
 }
 
 
