@@ -18,8 +18,6 @@ $global:ADSI             = $null
 #  HELPERS
 # ─────────────────────────────────────────────
 
-# Resuelve el nombre real del grupo local para icacls
-# Evita "No mapping between account names and security IDs"
 Function Get-LocalGroupName {
     param([string]$Name)
     try {
@@ -29,13 +27,11 @@ Function Get-LocalGroupName {
     }
 }
 
-# Nombre del grupo Administrators resuelto por SID (funciona en cualquier idioma)
 Function Get-AdminGroupName {
     return (New-Object System.Security.Principal.SecurityIdentifier("S-1-5-32-544")).Translate(
         [System.Security.Principal.NTAccount]).Value
 }
 
-# Crea symlink de directorio con fallback a cmd mklink si New-Item falla
 Function New-SymbolicLink {
     param(
         [string]$Path,
@@ -67,8 +63,6 @@ Function New-SymbolicLink {
     }
 }
 
-# Escribe reglas de autorizacion FTP directamente en applicationHost.config
-# Detiene W3SVC/ftpsvc para evitar el lock "file in use" y el error 534 SSL
 Function Set-FtpAuthRules {
     Write-Host "  Aplicando reglas de autorizacion (edicion directa XML)..." -ForegroundColor DarkGray
 
@@ -79,7 +73,7 @@ Function Set-FtpAuthRules {
     $cfg = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
     [xml]$xml = Get-Content $cfg -Encoding UTF8
 
-    # ── SSL: parchear siteDefaults y el sitio FTP especifico ──
+    # ── SSL ──
     $sitesNode = $xml.configuration."system.applicationHost".sites
 
     if ($sitesNode.siteDefaults.ftpServer.security.ssl) {
@@ -93,7 +87,7 @@ Function Set-FtpAuthRules {
         $ftpSite.ftpServer.security.ssl.dataChannelPolicy    = "SslAllow"
     }
 
-    # ── Autorizacion: buscar/crear <location path="FTP"> ──
+    # ── Autorizacion ──
     $locNode = $xml.configuration.location | Where-Object { $_.path -eq "FTP" }
     if (-not $locNode) {
         $locNode = $xml.CreateElement("location")
@@ -101,7 +95,6 @@ Function Set-FtpAuthRules {
         $xml.configuration.AppendChild($locNode) | Out-Null
     }
 
-    # Asegurar jerarquia system.ftpServer/security/authorization
     if (-not $locNode."system.ftpServer") {
         $locNode.AppendChild($xml.CreateElement("system.ftpServer")) | Out-Null
     }
@@ -111,13 +104,12 @@ Function Set-FtpAuthRules {
 
     $authNode = $locNode."system.ftpServer".security.authorization
     if ($authNode) {
-        $authNode.RemoveAll()   # borrar reglas duplicadas/residuales
+        $authNode.RemoveAll()
     } else {
         $authNode = $xml.CreateElement("authorization")
         $locNode."system.ftpServer".security.AppendChild($authNode) | Out-Null
     }
 
-    # Helper local para construir una regla <add ... />
     function _Rule($aType, $users, $roles, $perms) {
         $r = $xml.CreateElement("add")
         $r.SetAttribute("accessType",  $aType)
@@ -127,12 +119,11 @@ Function Set-FtpAuthRules {
         return $r
     }
 
-    # users="?" = anonimo en IIS-FTP (solo lectura)
-    $authNode.AppendChild((_Rule "Allow" "?" ""                       "Read"))       | Out-Null
-    # Grupos autenticados: lectura + escritura
-    $authNode.AppendChild((_Rule "Allow" "" "reprobados,recursadores" "Read, Write")) | Out-Null
-    # Denegar al resto
-    $authNode.AppendChild((_Rule "Deny"  "*" ""                       "Read, Write")) | Out-Null
+    # [FIX] Orden correcto: primero los Allow específicos, Deny al final
+    $authNode.AppendChild((_Rule "Allow" "?"        ""                        "Read"))        | Out-Null
+    $authNode.AppendChild((_Rule "Allow" "anonimo"  ""                        "Read"))        | Out-Null
+    $authNode.AppendChild((_Rule "Allow" ""         "reprobados,recursadores" "Read, Write")) | Out-Null
+    $authNode.AppendChild((_Rule "Deny"  "*"        ""                        "Read, Write")) | Out-Null
 
     $xml.Save($cfg)
     Write-Host "  Configuracion guardada." -ForegroundColor DarkGray
@@ -153,7 +144,6 @@ Function Set-FtpAuthRules {
 Function Install-FtpDaemon {
     Write-Host "Instalando dependencias de FTP..."
 
-    # Features de Windows
     foreach ($f in @("Web-Server","Web-FTP-Service","Web-FTP-Server","Web-Basic-Auth")) {
         $feat = Get-WindowsFeature -Name $f
         if (-not $feat.Installed) {
@@ -166,7 +156,6 @@ Function Install-FtpDaemon {
 
     Import-Module WebAdministration -ErrorAction Stop
 
-    # Firewall
     foreach ($rule in @(
         @{Name="FTP Control Port";  Port="21"},
         @{Name="FTP Passive Ports"; Port="50000-50100"}
@@ -180,7 +169,6 @@ Function Install-FtpDaemon {
         }
     }
 
-    # Directorios
     @(
         $script:FtpRootPath,
         $script:LocalUserPath,
@@ -201,27 +189,28 @@ Function Install-FtpDaemon {
 
     $adminGroup = Get-AdminGroupName
 
-    # Permisos NTFS con icacls (OI)(CI) = herencia recursiva en subdirectorios y archivos
-    # FtpRootPath — acceso basico para que IIS pueda navegar
-    icacls $script:FtpRootPath /grant "Users:(RX)"                     | Out-Null
+    # [FIX] FtpRootPath: IUSR necesita RX aqui para que IIS resuelva el virtual root
+    icacls $script:FtpRootPath /grant "IUSR:(OI)(CI)RX"               | Out-Null
+    icacls $script:FtpRootPath /grant "IIS_IUSRS:(OI)(CI)RX"          | Out-Null
     icacls $script:FtpRootPath /grant "${adminGroup}:(OI)(CI)F"        | Out-Null
 
     # LocalUserPath
     icacls $script:LocalUserPath /inheritance:r                        | Out-Null
-    icacls $script:LocalUserPath /grant "Users:(RX)"                   | Out-Null
-    icacls $script:LocalUserPath /grant "${adminGroup}:(OI)(CI)F"      | Out-Null
     icacls $script:LocalUserPath /grant "SYSTEM:(OI)(CI)F"             | Out-Null
+    icacls $script:LocalUserPath /grant "${adminGroup}:(OI)(CI)F"      | Out-Null
     icacls $script:LocalUserPath /grant "IUSR:(OI)(CI)RX"              | Out-Null
     icacls $script:LocalUserPath /grant "IIS_IUSRS:(OI)(CI)RX"         | Out-Null
+    # [FIX] Users necesita RX en LocalUserPath para que IIS liste el directorio del chroot
+    icacls $script:LocalUserPath /grant "Users:(RX)"                   | Out-Null
 
-    # PublicPath (chroot del anonimo)
+    # PublicPath (chroot del anonimo IIS ?)
     icacls $script:PublicPath /inheritance:r                           | Out-Null
     icacls $script:PublicPath /grant "${adminGroup}:(OI)(CI)F"         | Out-Null
     icacls $script:PublicPath /grant "SYSTEM:(OI)(CI)F"                | Out-Null
     icacls $script:PublicPath /grant "IUSR:(OI)(CI)RX"                 | Out-Null
     icacls $script:PublicPath /grant "IIS_IUSRS:(OI)(CI)RX"            | Out-Null
 
-    # GeneralPath: anonimo lectura, grupos autenticados modificar
+    # GeneralPath
     icacls $script:GeneralPath /inheritance:r                          | Out-Null
     icacls $script:GeneralPath /grant "${adminGroup}:(OI)(CI)F"        | Out-Null
     icacls $script:GeneralPath /grant "SYSTEM:(OI)(CI)F"               | Out-Null
@@ -231,7 +220,6 @@ Function Install-FtpDaemon {
 
     Write-Host "  [OK] Permisos NTFS aplicados." -ForegroundColor Green
 
-    # Sitio FTP en IIS
     if (-not (Get-WebSite -Name "FTP" -ErrorAction SilentlyContinue)) {
         New-WebFtpSite -Name "FTP" -Port 21 -PhysicalPath $script:FtpRootPath -Force | Out-Null
         Write-Host "  [OK] Sitio FTP creado." -ForegroundColor Green
@@ -240,30 +228,34 @@ Function Install-FtpDaemon {
         Write-Host "  [OK] Sitio FTP ya existe, ruta actualizada." -ForegroundColor DarkGray
     }
 
-    # Aislamiento por usuario (IIS busca C:\FTP\LocalUser\<usuario>\ como chroot)
+    # IsolateAllDirectories: IIS busca C:\FTP\LocalUser\<user>\ como chroot
     Set-WebConfigurationProperty `
         -Filter "/system.applicationHost/sites/site[@name='FTP']/ftpServer/userIsolation" `
         -Name "mode" -Value "IsolateAllDirectories"
 
-    # Autenticacion anonima + basica
+    # [FIX] Autenticacion: anonimo DESACTIVADO a nivel IIS (usamos usuario "anonimo" nombrado)
+    # Si quieres anonimo real de IIS activalo, pero para "anonimo" con contraseña usa Basic Auth
     Set-ItemProperty "IIS:\Sites\FTP" `
-        -Name ftpServer.security.authentication.anonymousAuthentication.enabled  -Value $true
-    Set-ItemProperty "IIS:\Sites\FTP" `
-        -Name ftpServer.security.authentication.anonymousAuthentication.username -Value "IUSR"
-    Set-ItemProperty "IIS:\Sites\FTP" `
-        -Name ftpServer.security.authentication.anonymousAuthentication.password -Value ""
+        -Name ftpServer.security.authentication.anonymousAuthentication.enabled  -Value $false
     Set-ItemProperty "IIS:\Sites\FTP" `
         -Name ftpServer.security.authentication.basicAuthentication.enabled      -Value $true
 
-    # SSL desactivado (valor 0 = SslAllow via property)
+    # SSL desactivado
     Set-ItemProperty "IIS:\Sites\FTP" `
         -Name ftpServer.security.ssl.controlChannelPolicy -Value 0
     Set-ItemProperty "IIS:\Sites\FTP" `
         -Name ftpServer.security.ssl.dataChannelPolicy    -Value 0
 
+    # [FIX] Puertos pasivos explícitos (necesarios para clientes detrás de NAT)
+    Set-WebConfigurationProperty `
+        -Filter "system.ftpServer/firewallSupport" `
+        -Name "lowDataChannelPort"  -Value 50000
+    Set-WebConfigurationProperty `
+        -Filter "system.ftpServer/firewallSupport" `
+        -Name "highDataChannelPort" -Value 50100
+
     Write-Host "  [OK] Sitio FTP configurado." -ForegroundColor Green
 
-    # Reglas de autorizacion + parche SSL en applicationHost.config
     Set-FtpAuthRules
 
     Write-Host ""
@@ -313,7 +305,6 @@ Function Initialize-FtpGroups {
         Write-Host "  [OK] Permisos aplicados a: $gPath" -ForegroundColor DarkGray
     }
 
-    # General: ambos grupos pueden modificar + IUSR solo lectura
     $rep = Get-LocalGroupName "Reprobados"
     $rec = Get-LocalGroupName "Recursadores"
     icacls $script:GeneralPath /grant "${rep}:(OI)(CI)M"   | Out-Null
@@ -388,12 +379,10 @@ Function New-FtpUser {
         $global:ADSI = [ADSI]"WinNT://$env:ComputerName"
     }
 
-    # Crear usuario Windows via ADSI
     try {
         $user = $global:ADSI.Create("User", $Username)
         $user.SetInfo()
         $user.SetPassword($Password)
-        # 0x200 = NORMAL_ACCOUNT | 0x10000 = DONT_EXPIRE_PASSWD
         $user.psbase.InvokeSet("UserFlags", 0x10200)
         $user.SetInfo()
         Write-Host "  [OK] Usuario '$Username' creado." -ForegroundColor Green
@@ -406,31 +395,26 @@ Function New-FtpUser {
         Set-LocalUser -Name $Username -PasswordNeverExpires $true -ErrorAction Stop
     } catch {}
 
-    # Agregar al grupo
     Add-LocalGroupMember -Group $Group -Member $Username -ErrorAction SilentlyContinue
 
     $adminGroup = Get-AdminGroupName
 
-    # Garantizar permisos en LocalUserPath antes de crear subdirectorios
+    # [FIX] takeown + reset permisos en LocalUserPath antes de crear subdirectorios
     takeown /F $script:LocalUserPath /R /D Y 2>$null | Out-Null
     icacls $script:LocalUserPath /inheritance:r                          | Out-Null
     icacls $script:LocalUserPath /grant "${adminGroup}:(OI)(CI)F"    /T | Out-Null
     icacls $script:LocalUserPath /grant "SYSTEM:(OI)(CI)F"           /T | Out-Null
     icacls $script:LocalUserPath /grant "IUSR:(OI)(CI)RX"            /T | Out-Null
     icacls $script:LocalUserPath /grant "IIS_IUSRS:(OI)(CI)RX"       /T | Out-Null
+    icacls $script:LocalUserPath /grant "Users:(RX)"                  /T | Out-Null
 
-    # Estructura:
-    #   C:\FTP\LocalUser\<user>          <- chroot IIS (IsolateAllDirectories)
-    #   C:\FTP\LocalUser\<user>\<user>   <- carpeta personal (Modify recursivo)
-    #   C:\FTP\LocalUser\<user>\General  <- symlink a Public\General
-    #   C:\FTP\LocalUser\<user>\<grupo>  <- symlink a grupos\<grupo>
     $userRoot    = "$script:LocalUserPath\$Username"
     $personalDir = "$userRoot\$Username"
 
     New-Item -Path $userRoot    -ItemType Directory -Force | Out-Null
     New-Item -Path $personalDir -ItemType Directory -Force | Out-Null
 
-    # userRoot: IUSR e IIS_IUSRS necesitan RX para que IIS verifique el home (fix error 530)
+    # [FIX] userRoot: IUSR e IIS_IUSRS con RX explícito (crítico para resolver el 530)
     icacls $userRoot /inheritance:r                              | Out-Null
     icacls $userRoot /grant "SYSTEM:(OI)(CI)F"                  | Out-Null
     icacls $userRoot /grant "${adminGroup}:(OI)(CI)F"           | Out-Null
@@ -438,15 +422,16 @@ Function New-FtpUser {
     icacls $userRoot /grant "IIS_IUSRS:(OI)(CI)RX"              | Out-Null
     icacls $userRoot /grant "${Username}:(OI)(CI)RX"            | Out-Null
 
-    # Carpeta personal: Modify recursivo (usuario puede crear subdirectorios sin limite)
+    # [FIX] personalDir: Modify para el usuario + RX para IIS
     icacls $personalDir /grant "${Username}:(OI)(CI)M"          | Out-Null
+    icacls $personalDir /grant "IUSR:(RX)"                      | Out-Null
+    icacls $personalDir /grant "IIS_IUSRS:(RX)"                 | Out-Null
+
     Write-Host "  [OK] Permisos asignados a $userRoot" -ForegroundColor Green
 
-    # Symlinks
     New-SymbolicLink -Path "$userRoot\General" -Target $script:GeneralPath -Directory
     New-SymbolicLink -Path "$userRoot\$Group"  -Target "$script:FtpRootPath\$Group" -Directory
 
-    # Registrar en lista
     if (-not (Select-String -Path $script:UserListPath -Pattern "^$Username$" -Quiet -ErrorAction SilentlyContinue)) {
         Add-Content -Path $script:UserListPath -Value $Username
     }
@@ -480,7 +465,6 @@ Function Add-FtpUsers {
         Write-Host ""
         Write-Host "  --- Usuario $i de $n ---" -ForegroundColor Cyan
 
-        # Nombre de usuario
         do {
             $username = Read-Host "  Nombre de usuario"
             if (-not $username) {
@@ -494,7 +478,6 @@ Function Add-FtpUsers {
             }
         } while (-not $username)
 
-        # Contrasena
         do {
             $pwd = Read-Host "  Contrasena (8-15, May, min, num, especial)"
             if ($pwd -notmatch $regex) {
@@ -506,7 +489,6 @@ Function Add-FtpUsers {
             }
         } while (-not $pwd)
 
-        # Grupo
         Write-Host "  Rol:"
         Write-Host "    1) Reprobados"
         Write-Host "    2) Recursadores"
@@ -584,19 +566,16 @@ Function Update-FtpUserGroup {
     Remove-LocalGroupMember -Group $CurrentGroup -Member $Username -ErrorAction SilentlyContinue
     Add-LocalGroupMember    -Group $NewGroup     -Member $Username -ErrorAction SilentlyContinue
 
-    # Eliminar symlink del grupo anterior
     $oldLink = "$userRoot\$CurrentGroup"
     if (Test-Path $oldLink) {
         cmd /c "rmdir `"$oldLink`"" 2>$null | Out-Null
         Write-Host "  [OK] Symlink '$CurrentGroup' eliminado." -ForegroundColor DarkGray
     }
 
-    # Crear symlink del nuevo grupo
     New-SymbolicLink -Path "$userRoot\$NewGroup" `
                      -Target "$script:FtpRootPath\$NewGroup" -Directory
     Write-Host "  [OK] Symlink '$NewGroup' creado." -ForegroundColor DarkGray
 
-    # Confirmar permisos en carpeta personal
     $personalDir = "$userRoot\$Username"
     icacls $personalDir /grant "${Username}:(OI)(CI)M" | Out-Null
 
@@ -668,7 +647,6 @@ function Set-GrupoFTP {
 
 function Remove-UsuarioFTP {
     param([string]$FTPUserName)
-    # Quitar de grupos
     foreach ($g in @("Reprobados","Recursadores")) {
         Remove-LocalGroupMember -Group $g -Member $FTPUserName -ErrorAction SilentlyContinue
     }
