@@ -85,72 +85,27 @@ Function Set-UserRootPermissions {
 }
 
 Function Set-FtpAuthRules {
-    Write-Host "  Aplicando reglas de autorizacion..." -ForegroundColor DarkGray
+    Write-Host "  Aplicando reglas de autorizacion seguras..." -ForegroundColor Cyan
 
-    Stop-Service ftpsvc -Force -ErrorAction SilentlyContinue
-    Stop-Service W3SVC  -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 3
+    # 1. Limpiar reglas existentes para el sitio FTP
+    Clear-WebConfiguration -Filter "/system.ftpServer/security/authorization" -PSPath "IIS:\Sites\FTP"
 
-    $cfg = "$env:SystemRoot\System32\inetsrv\config\applicationHost.config"
-    [xml]$xml = Get-Content $cfg -Encoding UTF8
+    # 2. Permitir a los grupos (Cuidando MAYUSCULAS para que coincidan con tus grupos)
+    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" `
+        -Value @{accessType="Allow"; roles="Reprobados,Recursadores"; permissions="Read,Write"} `
+        -PSPath "IIS:\Sites\FTP"
 
-    # SSL: SslAllow en siteDefaults y en el sitio FTP
-    $sitesNode = $xml.configuration."system.applicationHost".sites
+    # 3. Permitir anonimo (si realmente lo necesitas)
+    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" `
+        -Value @{accessType="Allow"; users="anonimo"; permissions="Read"} `
+        -PSPath "IIS:\Sites\FTP"
 
-    if ($sitesNode.siteDefaults.ftpServer.security.ssl) {
-        $sitesNode.siteDefaults.ftpServer.security.ssl.controlChannelPolicy = "SslAllow"
-        $sitesNode.siteDefaults.ftpServer.security.ssl.dataChannelPolicy    = "SslAllow"
-    }
+    # 4. Denegar el resto
+    Add-WebConfiguration -Filter "/system.ftpServer/security/authorization" `
+        -Value @{accessType="Deny"; users="*"; permissions="Read,Write"} `
+        -PSPath "IIS:\Sites\FTP"
 
-    $ftpSite = $sitesNode.site | Where-Object { $_.name -eq "FTP" }
-    if ($ftpSite -and $ftpSite.ftpServer.security.ssl) {
-        $ftpSite.ftpServer.security.ssl.controlChannelPolicy = "SslAllow"
-        $ftpSite.ftpServer.security.ssl.dataChannelPolicy    = "SslAllow"
-    }
-
-    # Autorizacion: location path="FTP"
-    $locNode = $xml.configuration.location | Where-Object { $_.path -eq "FTP" }
-    if (-not $locNode) {
-        $locNode = $xml.CreateElement("location")
-        $locNode.SetAttribute("path", "FTP")
-        $xml.configuration.AppendChild($locNode) | Out-Null
-    }
-    if (-not $locNode."system.ftpServer") {
-        $locNode.AppendChild($xml.CreateElement("system.ftpServer")) | Out-Null
-    }
-    if (-not $locNode."system.ftpServer".security) {
-        $locNode."system.ftpServer".AppendChild($xml.CreateElement("security")) | Out-Null
-    }
-
-    $authNode = $locNode."system.ftpServer".security.authorization
-    if ($authNode) { $authNode.RemoveAll() }
-    else {
-        $authNode = $xml.CreateElement("authorization")
-        $locNode."system.ftpServer".security.AppendChild($authNode) | Out-Null
-    }
-
-    function _Rule($aType, $users, $roles, $perms) {
-        $r = $xml.CreateElement("add")
-        $r.SetAttribute("accessType",  $aType)
-        $r.SetAttribute("users",       $users)
-        $r.SetAttribute("roles",       $roles)
-        $r.SetAttribute("permissions", $perms)
-        return $r
-    }
-
-    # Allow especificos primero, Deny al final
-    $authNode.AppendChild((_Rule "Allow" "anonimo" ""                        "Read"))        | Out-Null
-    $authNode.AppendChild((_Rule "Allow" ""        "reprobados,recursadores" "Read, Write")) | Out-Null
-    $authNode.AppendChild((_Rule "Deny"  "*"       ""                        "Read, Write")) | Out-Null
-
-    $xml.Save($cfg)
-
-    Start-Service W3SVC  -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
-    Start-Service ftpsvc -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
-
-    Write-Host "  [OK] Autorizacion y SSL aplicados." -ForegroundColor Green
+    Restart-WebItem "IIS:\Sites\FTP"
 }
 
 
