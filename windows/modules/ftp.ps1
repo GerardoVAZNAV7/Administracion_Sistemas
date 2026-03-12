@@ -74,22 +74,16 @@ function Configurar_Servicio_FTP {
     & $appcmd set site "$Global:SITE_NAME" "-ftpServer.security.authentication.basicAuthentication.enabled:true"
     & $appcmd set site "$Global:SITE_NAME" "-ftpServer.security.authentication.anonymousAuthentication.enabled:true"
 
-    # Limpiar reglas anteriores para evitar duplicados
     & $appcmd clear config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization 2>$null
 
-    # Anonimo SOLO LECTURA (users='?' = anonymous)
     & $appcmd set config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization /+"[accessType='Allow',users='?',permissions='Read']" /commit:apphost
-
-    # Usuarios autenticados: lectura + escritura
     & $appcmd set config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization /+"[accessType='Allow',users='*',permissions='Read,Write']" /commit:apphost
 
-    # Permisos NTFS para carpetas compartidas
     foreach ($g in @("reprobados", "recursadores")) {
         icacls "$Global:BASE_DATA\general" /grant "${g}:(OI)(CI)M" /T /Q | Out-Null
         icacls "$Global:BASE_DATA\$g"      /grant "${g}:(OI)(CI)M" /T /Q | Out-Null
     }
 
-    # Anonimo solo puede leer /general
     icacls "$Global:BASE_DATA\general" /grant "IUSR:(OI)(CI)R" /T /Q | Out-Null
 
     Restart-Service ftpsvc
@@ -101,6 +95,25 @@ function _Aplicar_Permisos_Usuario {
     icacls "$UserHome\$User"   /inheritance:r /grant "${User}:(OI)(CI)F"  /Q | Out-Null
     icacls "$UserHome\general" /grant "${User}:(OI)(CI)M" /T /Q | Out-Null
     icacls "$UserHome\$Grupo"  /grant "${User}:(OI)(CI)M" /T /Q | Out-Null
+}
+
+function _Eliminar_Junction {
+    param([string]$Path)
+    # Verifica que existe y es un ReparsePoint (junction/symlink) antes de borrar
+    if (Test-Path $Path) {
+        $item = Get-Item $Path -Force -ErrorAction SilentlyContinue
+        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            # Usar cmd /c rmdir SIN /S para no borrar el contenido destino
+            $result = cmd /c "rmdir `"$Path`"" 2>&1
+            if (Test-Path $Path) {
+                # Si rmdir fallo, forzar con [System.IO.Directory]
+                [System.IO.Directory]::Delete($Path, $false) 2>$null
+            }
+        } elseif ($item) {
+            # Es carpeta real (no junction), borrar normalmente
+            Remove-Item $Path -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Crear_Usuarios {
@@ -153,21 +166,46 @@ function Cambiar_Grupo {
     $NuevoG = if ($G_Opt -eq "1") { "reprobados" } else { "recursadores" }
     $ViejoG = if ($G_Opt -eq "1") { "recursadores" } else { "reprobados" }
 
+    # Verificar que el usuario no este ya en el grupo destino
+    $yaEnGrupo = Get-LocalGroupMember $NuevoG -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -match "\\$User$" }
+    if ($yaEnGrupo) {
+        Write-Host "[!] $User ya pertenece a $NuevoG." -ForegroundColor Yellow
+        return
+    }
+
+    # Cambiar membresia de grupo
     Remove-LocalGroupMember -Group $ViejoG -Member $User -ErrorAction SilentlyContinue
     Add-LocalGroupMember    -Group $NuevoG -Member $User -ErrorAction SilentlyContinue
 
     $UserHome = Join-Path $Global:LOCAL_USER $User
 
-    if (Test-Path "$UserHome\$ViejoG") {
-        cmd /c "rmdir `"$UserHome\$ViejoG`"" | Out-Null
+    # ── FIX: eliminar junction del grupo viejo correctamente ──
+    $junctionViejo = Join-Path $UserHome $ViejoG
+    Write-Host "[+] Eliminando junction del grupo anterior ($ViejoG)..." -ForegroundColor Cyan
+    _Eliminar_Junction -Path $junctionViejo
+
+    if (Test-Path $junctionViejo) {
+        Write-Host "    [!] No se pudo eliminar $junctionViejo. Verifica manualmente." -ForegroundColor Red
+    } else {
+        Write-Host "    [OK] Junction '$ViejoG' eliminada." -ForegroundColor Green
     }
-    if (!(Test-Path "$UserHome\$NuevoG")) {
-        cmd /c "mklink /D `"$UserHome\$NuevoG`" `"$Global:BASE_DATA\$NuevoG`"" | Out-Null
+
+    # ── Crear junction del grupo nuevo ──
+    $junctionNuevo = Join-Path $UserHome $NuevoG
+    if (!(Test-Path $junctionNuevo)) {
+        cmd /c "mklink /D `"$junctionNuevo`" `"$Global:BASE_DATA\$NuevoG`"" | Out-Null
+        Write-Host "    [OK] Junction '$NuevoG' creada." -ForegroundColor Green
+    } else {
+        Write-Host "    [OK] Junction '$NuevoG' ya existe." -ForegroundColor Green
     }
+
+    # Revocar permisos del grupo viejo sobre la carpeta de datos
+    icacls "$Global:BASE_DATA\$ViejoG" /remove "${User}" /T /Q | Out-Null
 
     _Aplicar_Permisos_Usuario -User $User -Grupo $NuevoG -UserHome $UserHome
 
-    Write-Host "[OK] $User movido a $NuevoG." -ForegroundColor Green
+    Write-Host "[OK] $User movido de $ViejoG a $NuevoG." -ForegroundColor Green
 }
 
 function Listar_Usuarios {
