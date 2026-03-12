@@ -183,6 +183,20 @@ function Cambiar_Grupo {
     # ── Detener ftpsvc para liberar handles sobre los junctions ──
     Write-Host "[+] Deteniendo ftpsvc para liberar handles..." -ForegroundColor Cyan
     Stop-Service ftpsvc -Force -ErrorAction SilentlyContinue
+    #TENGO QUE BORRAR ESTO DESPUES
+    # ── DIAGNOSTICO TEMPORAL - borrar despues ──
+Write-Host "`n=== ESTADO DEL DIRECTORIO DEL USUARIO ===" -ForegroundColor Yellow
+Write-Host "UserHome: $UserHome"
+Write-Host "Existe UserHome: $(Test-Path $UserHome)"
+Get-ChildItem $UserHome -Force -ErrorAction SilentlyContinue | ForEach-Object {
+    $esJunction = ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
+    Write-Host "  $($_.Name)  [Junction=$esJunction]  Atributos=$($_.Attributes)"
+    if ($esJunction) {
+        $target = cmd /c "fsutil reparsepoint query `"$($_.FullName)`"" 2>&1 | Select-String "Print Name"
+        Write-Host "    -> Target: $target"
+    }
+}
+Write-Host "==========================================`n" -ForegroundColor Yellow
     Start-Sleep -Seconds 2
 
     # ── Eliminar TODOS los junctions de grupo (reprobados y recursadores) por si hay residuos ──
