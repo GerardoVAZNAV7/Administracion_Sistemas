@@ -164,8 +164,14 @@ inicializar_sistema() {
 
     sudo chown root:reprobados /srv/ftp/groups/reprobados
     sudo chmod 2775 /srv/ftp/groups/reprobados
-    aplicar_acl_heredable /srv/ftp/groups/reprobados "g:reprobados" "rwx"
-    aplicar_acl_heredable /srv/ftp/groups/reprobados "u:root"       "rwx"
+   # DESPUES — agregar ftp-users:
+aplicar_acl_heredable /srv/ftp/groups/reprobados "g:reprobados" "rwx"
+aplicar_acl_heredable /srv/ftp/groups/reprobados "g:ftp-users"  "rwx"
+aplicar_acl_heredable /srv/ftp/groups/reprobados "u:root"       "rwx"
+
+aplicar_acl_heredable /srv/ftp/groups/recursadores "g:recursadores" "rwx"
+aplicar_acl_heredable /srv/ftp/groups/recursadores "g:ftp-users"    "rwx"
+aplicar_acl_heredable /srv/ftp/groups/recursadores "u:root"         "rwx"
 
     sudo chown root:recursadores /srv/ftp/groups/recursadores
     sudo chmod 2775 /srv/ftp/groups/recursadores
