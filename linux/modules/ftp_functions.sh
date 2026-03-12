@@ -106,6 +106,31 @@ desproteger_carpetas_usuario() {
     sudo chattr -i "${home}/${group}" 2>/dev/null
 }
 
+# ─────────────────────────────────────────────────────────────
+# FIX CENTRAL: aplicar permisos correctos sobre la carpeta
+# de grupo en BASE_DATA (no sobre el mount point del home).
+# El bind mount hereda los permisos del origen, por eso hay
+# que modificar /srv/ftp/groups/<grupo> directamente.
+# ─────────────────────────────────────────────────────────────
+_aplicar_permisos_grupo_en_base() {
+    local user="$1"
+    local group="$2"
+    local base_dir="/srv/ftp/groups/${group}"
+
+    # Asegurar que el usuario sea dueño de grupo y tenga rwx
+    sudo chown "root:${group}" "$base_dir"
+    sudo chmod 2775 "$base_dir"
+
+    # ACL directa para el usuario especifico (permite escribir aunque umask)
+    sudo setfacl    -m "u:${user}:rwx" "$base_dir"
+    sudo setfacl -d -m "u:${user}:rwx" "$base_dir"
+    sudo setfacl    -m "g:${group}:rwx" "$base_dir"
+    sudo setfacl -d -m "g:${group}:rwx" "$base_dir"
+
+    # SELinux: contexto de escritura publica
+    sudo chcon -R -t public_content_rw_t "$base_dir" &>/dev/null
+}
+
 inicializar_sistema() {
     echo ""
     echo "================================================="
@@ -137,7 +162,6 @@ inicializar_sistema() {
     aplicar_acl_heredable /srv/ftp/general "u:root"      "rwx"
     aplicar_acl_heredable /srv/ftp/general "other"       "r-x"
 
-    # FIX: 2770 -> 2775 para que los miembros del grupo puedan entrar al directorio
     sudo chown root:reprobados /srv/ftp/groups/reprobados
     sudo chmod 2775 /srv/ftp/groups/reprobados
     aplicar_acl_heredable /srv/ftp/groups/reprobados "g:reprobados" "rwx"
@@ -249,34 +273,31 @@ _configurar_home() {
     sudo chown root:root "$home"
     sudo chmod 755 "$home"
 
-    # Carpeta personal
+    # Carpeta personal: solo el usuario
     sudo chown "${user}:${user}" "${home}/${user}"
     sudo chmod 700 "${home}/${user}"
     aplicar_acl_heredable "${home}/${user}" "u:${user}" "rwx"
     sudo chcon -R -t user_home_t "${home}/${user}" &>/dev/null
 
-    # ---------------------------------------------------------------
-    # FIX PRINCIPAL: montar PRIMERO, aplicar ACLs DESPUES
-    # Antes las ACLs se escribian sobre el directorio vacio del home,
-    # no sobre el filesystem real que se monta encima de ese punto.
-    # Las ACLs en el directorio huésped se tapan con el mount.
-    # ---------------------------------------------------------------
+    # Desmontar si habia algo previo
     sudo umount "${home}/general"       2>/dev/null
     sudo umount "${home}/reprobados"    2>/dev/null
     sudo umount "${home}/recursadores"  2>/dev/null
 
+    # ── FIX: aplicar permisos en BASE_DATA ANTES del bind mount ──
+    # El bind mount expone el filesystem origen tal cual.
+    # Los permisos deben estar en /srv/ftp/groups/<grupo>, no en el mount point.
+    _aplicar_permisos_grupo_en_base "$user" "$group"
+
+    # Montar directorios compartidos
     sudo mount --bind /srv/ftp/general           "${home}/general"
     sudo mount --bind "/srv/ftp/groups/${group}" "${home}/${group}"
 
-    # ACLs sobre el punto de montaje ya activo
-    aplicar_acl_heredable "${home}/general"  "u:${user}"   "rwx"
-    aplicar_acl_heredable "${home}/general"  "g:ftp-users" "rwx"
-    aplicar_acl_heredable "${home}/${group}" "u:${user}"   "rwx"
-    aplicar_acl_heredable "${home}/${group}" "g:${group}"  "rwx"
-
+    # Contexto SELinux sobre los puntos de montaje activos
     sudo chcon -R -t public_content_rw_t "${home}/general"  &>/dev/null
     sudo chcon -R -t public_content_rw_t "${home}/${group}" &>/dev/null
 
+    # fstab
     local entry_gen="/srv/ftp/general ${home}/general none bind 0 0"
     local entry_grp="/srv/ftp/groups/${group} ${home}/${group} none bind 0 0"
 
@@ -307,21 +328,25 @@ modificar_grupo_usuario() {
         return 0
     fi
 
+    # Limpiar grupo viejo
     if [[ -n "$old_group" ]]; then
         sudo chattr -i "${home}/${old_group}" 2>/dev/null
         sudo umount "${home}/${old_group}"    2>/dev/null
         sudo rm -rf "${home:?}/${old_group}"
         sudo sed -i "\|${home}/${old_group}|d" /etc/fstab
+
+        # ── FIX: revocar ACL del usuario en la carpeta del grupo viejo ──
+        sudo setfacl    -x "u:${user}" "/srv/ftp/groups/${old_group}" 2>/dev/null
+        sudo setfacl -d -x "u:${user}" "/srv/ftp/groups/${old_group}" 2>/dev/null
     fi
 
     sudo usermod -G "ftp-users,${new_group}" "$user"
 
+    # ── FIX: aplicar permisos en BASE_DATA del grupo nuevo ANTES del mount ──
+    _aplicar_permisos_grupo_en_base "$user" "$new_group"
+
     sudo mkdir -p "${home}/${new_group}"
     sudo mount --bind "/srv/ftp/groups/${new_group}" "${home}/${new_group}"
-
-    # FIX: ACLs despues del mount, con el grupo nuevo incluido
-    aplicar_acl_heredable "${home}/${new_group}" "u:${user}"      "rwx"
-    aplicar_acl_heredable "${home}/${new_group}" "g:${new_group}" "rwx"
 
     sudo chcon -R -t public_content_rw_t "${home}/${new_group}" &>/dev/null
 
@@ -345,6 +370,12 @@ eliminar_usuario() {
 
     desproteger_carpetas_usuario "$user" "reprobados"
     desproteger_carpetas_usuario "$user" "recursadores"
+
+    # Revocar ACLs del usuario en ambos grupos de base
+    for g in reprobados recursadores; do
+        sudo setfacl    -x "u:${user}" "/srv/ftp/groups/${g}" 2>/dev/null
+        sudo setfacl -d -x "u:${user}" "/srv/ftp/groups/${g}" 2>/dev/null
+    done
 
     sudo umount "${home}/general"       2>/dev/null
     sudo umount "${home}/reprobados"    2>/dev/null
