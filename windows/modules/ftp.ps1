@@ -180,30 +180,46 @@ function Cambiar_Grupo {
 
     $UserHome = Join-Path $Global:LOCAL_USER $User
 
-    # ── FIX: eliminar junction del grupo viejo correctamente ──
-    $junctionViejo = Join-Path $UserHome $ViejoG
-    Write-Host "[+] Eliminando junction del grupo anterior ($ViejoG)..." -ForegroundColor Cyan
-    _Eliminar_Junction -Path $junctionViejo
+    # ── Detener ftpsvc para liberar handles sobre los junctions ──
+    Write-Host "[+] Deteniendo ftpsvc para liberar handles..." -ForegroundColor Cyan
+    Stop-Service ftpsvc -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
 
-    if (Test-Path $junctionViejo) {
-        Write-Host "    [!] No se pudo eliminar $junctionViejo. Verifica manualmente." -ForegroundColor Red
-    } else {
-        Write-Host "    [OK] Junction '$ViejoG' eliminada." -ForegroundColor Green
+    # ── Eliminar TODOS los junctions de grupo (reprobados y recursadores) por si hay residuos ──
+    foreach ($g in @("reprobados", "recursadores")) {
+        $jPath = Join-Path $UserHome $g
+        if (Test-Path $jPath) {
+            Write-Host "[+] Eliminando junction '$g'..." -ForegroundColor Cyan
+            _Eliminar_Junction -Path $jPath
+            if (Test-Path $jPath) {
+                Write-Host "    [!] No se pudo eliminar $jPath" -ForegroundColor Red
+            } else {
+                Write-Host "    [OK] Junction '$g' eliminada." -ForegroundColor Green
+            }
+        }
     }
 
-    # ── Crear junction del grupo nuevo ──
+    # ── Crear SOLO el junction del grupo nuevo ──
     $junctionNuevo = Join-Path $UserHome $NuevoG
     if (!(Test-Path $junctionNuevo)) {
-        cmd /c "mklink /D `"$junctionNuevo`" `"$Global:BASE_DATA\$NuevoG`"" | Out-Null
-        Write-Host "    [OK] Junction '$NuevoG' creada." -ForegroundColor Green
+        $mkResult = cmd /c "mklink /D `"$junctionNuevo`" `"$Global:BASE_DATA\$NuevoG`"" 2>&1
+        if (Test-Path $junctionNuevo) {
+            Write-Host "    [OK] Junction '$NuevoG' creada -> $Global:BASE_DATA\$NuevoG" -ForegroundColor Green
+        } else {
+            Write-Host "    [!] ERROR creando junction '$NuevoG': $mkResult" -ForegroundColor Red
+        }
     } else {
         Write-Host "    [OK] Junction '$NuevoG' ya existe." -ForegroundColor Green
     }
 
-    # Revocar permisos del grupo viejo sobre la carpeta de datos
+    # ── Revocar permisos NTFS del grupo viejo, aplicar los del nuevo ──
     icacls "$Global:BASE_DATA\$ViejoG" /remove "${User}" /T /Q | Out-Null
-
     _Aplicar_Permisos_Usuario -User $User -Grupo $NuevoG -UserHome $UserHome
+
+    # ── Reiniciar ftpsvc para que IIS refresque los junctions ──
+    Write-Host "[+] Reiniciando ftpsvc..." -ForegroundColor Cyan
+    Start-Service ftpsvc -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
 
     Write-Host "[OK] $User movido de $ViejoG a $NuevoG." -ForegroundColor Green
 }
