@@ -36,10 +36,12 @@ function Configurar_Servicio_FTP {
         New-Item $Global:LOCAL_USER -ItemType Directory -Force | Out-Null
     }
 
+    # Carpeta del usuario anonimo
     $AnonPath = Join-Path $Global:LOCAL_USER "Public"
     if (!(Test-Path $AnonPath)) {
         New-Item $AnonPath -ItemType Directory -Force | Out-Null
     }
+    # General del anonimo: junction (solo lectura, no necesita cambiar)
     if (!(Test-Path "$AnonPath\general")) {
         cmd /c "mklink /D `"$AnonPath\general`" `"$Global:BASE_DATA\general`"" | Out-Null
     }
@@ -75,43 +77,88 @@ function Configurar_Servicio_FTP {
     & $appcmd set site "$Global:SITE_NAME" "-ftpServer.security.authentication.anonymousAuthentication.enabled:true"
 
     & $appcmd clear config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization 2>$null
-
     & $appcmd set config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization /+"[accessType='Allow',users='?',permissions='Read']" /commit:apphost
     & $appcmd set config "$Global:SITE_NAME" -section:system.ftpServer/security/authorization /+"[accessType='Allow',users='*',permissions='Read,Write']" /commit:apphost
 
+    # Permisos base de grupos sobre sus carpetas en BASE_DATA
     foreach ($g in @("reprobados", "recursadores")) {
         icacls "$Global:BASE_DATA\general" /grant "${g}:(OI)(CI)M" /T /Q | Out-Null
         icacls "$Global:BASE_DATA\$g"      /grant "${g}:(OI)(CI)M" /T /Q | Out-Null
     }
-
     icacls "$Global:BASE_DATA\general" /grant "IUSR:(OI)(CI)R" /T /Q | Out-Null
 
     Restart-Service ftpsvc
     Write-Host "[OK] Servicio FTP configurado correctamente." -ForegroundColor Green
 }
 
-function _Aplicar_Permisos_Usuario {
-    param($User, $Grupo, $UserHome)
-    icacls "$UserHome\$User"   /inheritance:r /grant "${User}:(OI)(CI)F"  /Q | Out-Null
-    icacls "$UserHome\general" /grant "${User}:(OI)(CI)M" /T /Q | Out-Null
-    icacls "$UserHome\$Grupo"  /grant "${User}:(OI)(CI)M" /T /Q | Out-Null
-}
+# ─────────────────────────────────────────────────────────────
+# ENFOQUE: carpetas virtuales via permisos NTFS sobre BASE_DATA
+# El home del usuario contiene:
+#   \<User>\         <- carpeta privada (Full Control solo del user)
+#   \general\        <- junction a BASE_DATA\general (fijo, no cambia)
+#   \reprobados\ o \recursadores\  <- junction al grupo actual
+#
+# Al cambiar grupo: se elimina el junction viejo y se crea el nuevo.
+# Para forzar la eliminacion se usa cmd /c rmdir con iisreset previo.
+# ─────────────────────────────────────────────────────────────
 
-function _Eliminar_Junction {
-    param([string]$Path)
-    # rmdir funciona con junctions validos Y rotos (sin target)
-    # NO usar Test-Path como guard: los junctions rotos lo enganan
-    cmd /c "rmdir `"$Path`"" 2>&1 | Out-Null
+function _Limpiar_Junctions_Grupo {
+    param([string]$UserHome)
+    # Elimina TODOS los junctions de grupo que existan (validos, rotos, o residuos)
+    foreach ($g in @("reprobados", "recursadores")) {
+        $jPath = Join-Path $UserHome $g
 
-    # Verificar con Get-Item -Force (ve ReparsePoints aunque esten rotos)
-    $item = Get-Item $Path -Force -ErrorAction SilentlyContinue
-    if ($item) {
-        try { [System.IO.Directory]::Delete($Path, $false) } catch {}
-        $item2 = Get-Item $Path -Force -ErrorAction SilentlyContinue
-        if ($item2) {
-            Remove-Item $Path -Force -Recurse -ErrorAction SilentlyContinue
+        # Intentar con Get-Item -Force para ver ReparsePoints rotos
+        $item = Get-Item $jPath -Force -ErrorAction SilentlyContinue
+        if (-not $item) { continue }  # No existe nada, ok
+
+        Write-Host "    [~] Eliminando junction '$g'..." -ForegroundColor DarkCyan
+
+        # Metodo 1: rmdir (el mas confiable para junctions)
+        cmd /c "rmdir `"$jPath`"" 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 300
+
+        # Verificar si quedo
+        $item = Get-Item $jPath -Force -ErrorAction SilentlyContinue
+        if (-not $item) {
+            Write-Host "      [OK] Eliminado con rmdir." -ForegroundColor Green
+            continue
+        }
+
+        # Metodo 2: .NET Directory.Delete (no sigue el reparse point)
+        try {
+            [System.IO.Directory]::Delete($jPath, $false)
+            Start-Sleep -Milliseconds 300
+        } catch {}
+
+        $item = Get-Item $jPath -Force -ErrorAction SilentlyContinue
+        if (-not $item) {
+            Write-Host "      [OK] Eliminado con .NET Delete." -ForegroundColor Green
+            continue
+        }
+
+        # Metodo 3: fsutil para eliminar el reparse point y luego rmdir
+        fsutil reparsepoint delete "$jPath" 2>&1 | Out-Null
+        cmd /c "rmdir `"$jPath`"" 2>&1 | Out-Null
+        Start-Sleep -Milliseconds 300
+
+        $item = Get-Item $jPath -Force -ErrorAction SilentlyContinue
+        if (-not $item) {
+            Write-Host "      [OK] Eliminado con fsutil+rmdir." -ForegroundColor Green
+        } else {
+            Write-Host "      [!] No se pudo eliminar '$jPath' - revisar manualmente." -ForegroundColor Red
         }
     }
+}
+
+function _Aplicar_Permisos_Usuario {
+    param($User, $Grupo, $UserHome)
+    # Carpeta privada del usuario: solo el tiene acceso total
+    icacls "$UserHome\$User"   /inheritance:r /grant "${User}:(OI)(CI)F" /Q | Out-Null
+    # Carpeta general: acceso de modificacion
+    icacls "$UserHome\general" /grant "${User}:(OI)(CI)M" /T /Q | Out-Null
+    # Carpeta de su grupo: acceso de modificacion
+    icacls "$UserHome\$Grupo"  /grant "${User}:(OI)(CI)M" /T /Q | Out-Null
 }
 
 function Crear_Usuarios {
@@ -138,18 +185,20 @@ function Crear_Usuarios {
         $UserHome = Join-Path $Global:LOCAL_USER $User
         New-Item $UserHome -ItemType Directory -Force | Out-Null
 
+        # Junction a general (fijo)
         if (!(Test-Path "$UserHome\general")) {
             cmd /c "mklink /D `"$UserHome\general`" `"$Global:BASE_DATA\general`"" | Out-Null
         }
+        # Junction al grupo asignado
         if (!(Test-Path "$UserHome\$Grupo")) {
             cmd /c "mklink /D `"$UserHome\$Grupo`" `"$Global:BASE_DATA\$Grupo`"" | Out-Null
         }
-
+        # Carpeta privada del usuario
         New-Item (Join-Path $UserHome $User) -ItemType Directory -Force | Out-Null
 
         _Aplicar_Permisos_Usuario -User $User -Grupo $Grupo -UserHome $UserHome
 
-        Write-Host "[OK] $User configurado en grupo $Grupo." -ForegroundColor Green
+        Write-Host "[OK] $User creado en grupo $Grupo." -ForegroundColor Green
     }
 }
 
@@ -171,53 +220,45 @@ function Cambiar_Grupo {
         return
     }
 
-    # Cambiar membresia
+    # 1. Cambiar membresia de grupo local
     Remove-LocalGroupMember -Group $ViejoG -Member $User -ErrorAction SilentlyContinue
     Add-LocalGroupMember    -Group $NuevoG -Member $User -ErrorAction SilentlyContinue
 
     $UserHome = Join-Path $Global:LOCAL_USER $User
 
-    # Detener ftpsvc para liberar handles sobre los junctions
-    Write-Host "[+] Deteniendo ftpsvc..." -ForegroundColor Cyan
+    # 2. Detener IIS completo para liberar TODOS los handles de filesystem
+    Write-Host "[+] Deteniendo IIS y ftpsvc..." -ForegroundColor Cyan
+    iisreset /stop 2>&1 | Out-Null
     Stop-Service ftpsvc -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 3
 
-    # Eliminar ambos junctions (validos y rotos)
-    foreach ($g in @("reprobados", "recursadores")) {
-        $jPath = Join-Path $UserHome $g
-        _Eliminar_Junction -Path $jPath
-        $queda = Get-Item $jPath -Force -ErrorAction SilentlyContinue
-        if ($queda) {
-            Write-Host "    [!] No se pudo eliminar junction '$g'" -ForegroundColor Red
-        } else {
-            Write-Host "    [OK] Junction '$g' limpia." -ForegroundColor Green
-        }
-    }
+    # 3. Limpiar TODOS los junctions de grupo (viejo, nuevo, rotos)
+    _Limpiar_Junctions_Grupo -UserHome $UserHome
 
-    # Crear SOLO el junction del grupo nuevo
-    $junctionNuevo = Join-Path $UserHome $NuevoG
-    cmd /c "mklink /D `"$junctionNuevo`" `"$Global:BASE_DATA\$NuevoG`"" 2>&1 | Out-Null
-    $creado = Get-Item $junctionNuevo -Force -ErrorAction SilentlyContinue
+    # 4. Crear SOLO el junction del grupo nuevo
+    $jNuevo = Join-Path $UserHome $NuevoG
+    cmd /c "mklink /D `"$jNuevo`" `"$Global:BASE_DATA\$NuevoG`"" 2>&1 | Out-Null
+    $creado = Get-Item $jNuevo -Force -ErrorAction SilentlyContinue
     if ($creado -and ($creado.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-        Write-Host "    [OK] Junction '$NuevoG' creada -> $Global:BASE_DATA\$NuevoG" -ForegroundColor Green
+        Write-Host "    [OK] Junction '$NuevoG' -> $Global:BASE_DATA\$NuevoG" -ForegroundColor Green
     } else {
-        Write-Host "    [!] ERROR: no se pudo crear junction '$NuevoG'" -ForegroundColor Red
+        Write-Host "    [!] ERROR: no se creo junction '$NuevoG'" -ForegroundColor Red
     }
 
-    # Revocar permisos NTFS del usuario sobre la carpeta del grupo VIEJO
-    # /remove:g = quitar grants, /remove:d = quitar denies
-    icacls "$Global:BASE_DATA\$ViejoG" /remove:g "${User}" /T /Q | Out-Null
-    icacls "$Global:BASE_DATA\$ViejoG" /remove:d "${User}" /T /Q | Out-Null
+    # 5. Revocar permisos NTFS del usuario en la carpeta del grupo VIEJO
+    icacls "$Global:BASE_DATA\$ViejoG" /remove:g "$User" /T /Q | Out-Null
+    icacls "$Global:BASE_DATA\$ViejoG" /remove:d "$User" /T /Q | Out-Null
 
-    # Aplicar permisos correctos para el grupo nuevo
+    # 6. Aplicar permisos en la carpeta del grupo NUEVO
     _Aplicar_Permisos_Usuario -User $User -Grupo $NuevoG -UserHome $UserHome
 
-    # Reiniciar ftpsvc
-    Write-Host "[+] Reiniciando ftpsvc..." -ForegroundColor Cyan
+    # 7. Reiniciar IIS y ftpsvc
+    Write-Host "[+] Reiniciando IIS y ftpsvc..." -ForegroundColor Cyan
+    iisreset /start 2>&1 | Out-Null
     Start-Service ftpsvc -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
+    Start-Sleep -Seconds 2
 
-    Write-Host "[OK] $User movido de $ViejoG a $NuevoG." -ForegroundColor Green
+    Write-Host "[OK] $User movido de $ViejoG a $NuevoG correctamente." -ForegroundColor Green
 }
 
 function Listar_Usuarios {
