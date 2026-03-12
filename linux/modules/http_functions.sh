@@ -229,10 +229,45 @@ instalar_nginx() {
     local vhost_dir="/var/www/nginx_$puerto"
     mkdir -p "$vhost_dir"
 
-    # FIX: renombrar default.conf para evitar conflicto con puerto 80
-    if [ -f /etc/nginx/conf.d/default.conf ]; then
+    # Deshabilitar default.conf de conf.d/
+    [ -f /etc/nginx/conf.d/default.conf ] && \
         mv /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled
-    fi
+
+    # FIX PRINCIPAL: nginx.conf tiene un bloque server{ listen 80; } hardcodeado
+    # dentro del bloque http{} que causa el "Address already in use".
+    # Se reemplaza nginx.conf por una version limpia sin server blocks.
+    cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak_script
+    cat > /etc/nginx/nginx.conf << 'NGINXCONF'
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log notice;
+pid /run/nginx.pid;
+
+include /usr/share/nginx/modules/*.conf;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+
+    access_log  /var/log/nginx/access.log  main;
+
+    sendfile            on;
+    tcp_nopush          on;
+    keepalive_timeout   65;
+    types_hash_max_size 4096;
+    server_tokens       off;
+
+    include             /etc/nginx/mime.types;
+    default_type        application/octet-stream;
+
+    include /etc/nginx/conf.d/*.conf;
+}
+NGINXCONF
 
     cat > /etc/nginx/conf.d/vhost_${puerto}.conf << EOF
 server {
@@ -252,6 +287,14 @@ EOF
     if [ "$puerto" != "80" ] && [ "$puerto" != "443" ]; then
         semanage port -a -t http_port_t -p tcp "$puerto" 2>/dev/null \
             || semanage port -m -t http_port_t -p tcp "$puerto" 2>/dev/null
+    fi
+
+    # Validar sintaxis antes de reiniciar
+    if ! nginx -t &>/dev/null; then
+        echo "  [!] Error en config nginx. Restaurando backup..."
+        cp /etc/nginx/nginx.conf.bak_script /etc/nginx/nginx.conf
+        nginx -t
+        return 1
     fi
 
     configurar_firewall "$puerto"
