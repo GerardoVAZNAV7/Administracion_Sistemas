@@ -80,25 +80,15 @@ aplicar_acl_heredable() {
     sudo setfacl -R -d -m "${entidad}:${permisos}" "$ruta"
 }
 
-# -----------------------------------------------------------------------------
-# PROTEGER CARPETAS PRINCIPALES (anti-rename/delete)
-# chattr +i sobre la carpeta: impide renombrar, mover o borrar el directorio
-# aunque el usuario tenga rwx en el padre. Solo root puede quitar +i.
-# Se aplica SOLO al directorio en si, no recursivo (-R), para no bloquear
-# la escritura de archivos dentro de el.
-# -----------------------------------------------------------------------------
-
 proteger_carpetas_usuario() {
     local user="$1"
     local group="$2"
     local home="/home/$user"
 
-    # Quitar inmutabilidad primero (por idempotencia al reconfigurar)
-    sudo chattr -i "${home}/${user}"   2>/dev/null
-    sudo chattr -i "${home}/general"   2>/dev/null
-    sudo chattr -i "${home}/${group}"  2>/dev/null
+    sudo chattr -i "${home}/${user}"  2>/dev/null
+    sudo chattr -i "${home}/general"  2>/dev/null
+    sudo chattr -i "${home}/${group}" 2>/dev/null
 
-    # Aplicar inmutabilidad solo al directorio (no a su contenido)
     sudo chattr +i "${home}/${user}"
     sudo chattr +i "${home}/general"
     sudo chattr +i "${home}/${group}"
@@ -111,9 +101,9 @@ desproteger_carpetas_usuario() {
     local group="$2"
     local home="/home/$user"
 
-    sudo chattr -i "${home}/${user}"   2>/dev/null
-    sudo chattr -i "${home}/general"   2>/dev/null
-    sudo chattr -i "${home}/${group}"  2>/dev/null
+    sudo chattr -i "${home}/${user}"  2>/dev/null
+    sudo chattr -i "${home}/general"  2>/dev/null
+    sudo chattr -i "${home}/${group}" 2>/dev/null
 }
 
 inicializar_sistema() {
@@ -147,13 +137,14 @@ inicializar_sistema() {
     aplicar_acl_heredable /srv/ftp/general "u:root"      "rwx"
     aplicar_acl_heredable /srv/ftp/general "other"       "r-x"
 
+    # FIX: 2770 -> 2775 para que los miembros del grupo puedan entrar al directorio
     sudo chown root:reprobados /srv/ftp/groups/reprobados
-    sudo chmod 2770 /srv/ftp/groups/reprobados
+    sudo chmod 2775 /srv/ftp/groups/reprobados
     aplicar_acl_heredable /srv/ftp/groups/reprobados "g:reprobados" "rwx"
     aplicar_acl_heredable /srv/ftp/groups/reprobados "u:root"       "rwx"
 
     sudo chown root:recursadores /srv/ftp/groups/recursadores
-    sudo chmod 2770 /srv/ftp/groups/recursadores
+    sudo chmod 2775 /srv/ftp/groups/recursadores
     aplicar_acl_heredable /srv/ftp/groups/recursadores "g:recursadores" "rwx"
     aplicar_acl_heredable /srv/ftp/groups/recursadores "u:root"         "rwx"
 
@@ -248,7 +239,6 @@ _configurar_home() {
     local group="$2"
     local home="/home/$user"
 
-    # Quitar inmutabilidad antes de tocar las carpetas (por idempotencia)
     desproteger_carpetas_usuario "$user" "$group"
 
     sudo mkdir -p "${home}/${user}"
@@ -259,13 +249,18 @@ _configurar_home() {
     sudo chown root:root "$home"
     sudo chmod 755 "$home"
 
-    # Carpeta personal del usuario
-    sudo chown "${user}:ftp-users" "${home}/${user}"
+    # Carpeta personal
+    sudo chown "${user}:${user}" "${home}/${user}"
     sudo chmod 700 "${home}/${user}"
     aplicar_acl_heredable "${home}/${user}" "u:${user}" "rwx"
     sudo chcon -R -t user_home_t "${home}/${user}" &>/dev/null
 
-    # Bind-mounts (desmontar primero por idempotencia)
+    # ---------------------------------------------------------------
+    # FIX PRINCIPAL: montar PRIMERO, aplicar ACLs DESPUES
+    # Antes las ACLs se escribian sobre el directorio vacio del home,
+    # no sobre el filesystem real que se monta encima de ese punto.
+    # Las ACLs en el directorio huésped se tapan con el mount.
+    # ---------------------------------------------------------------
     sudo umount "${home}/general"       2>/dev/null
     sudo umount "${home}/reprobados"    2>/dev/null
     sudo umount "${home}/recursadores"  2>/dev/null
@@ -273,8 +268,11 @@ _configurar_home() {
     sudo mount --bind /srv/ftp/general           "${home}/general"
     sudo mount --bind "/srv/ftp/groups/${group}" "${home}/${group}"
 
-    aplicar_acl_heredable "${home}/general"  "u:${user}" "rwx"
-    aplicar_acl_heredable "${home}/${group}" "u:${user}" "rwx"
+    # ACLs sobre el punto de montaje ya activo
+    aplicar_acl_heredable "${home}/general"  "u:${user}"   "rwx"
+    aplicar_acl_heredable "${home}/general"  "g:ftp-users" "rwx"
+    aplicar_acl_heredable "${home}/${group}" "u:${user}"   "rwx"
+    aplicar_acl_heredable "${home}/${group}" "g:${group}"  "rwx"
 
     sudo chcon -R -t public_content_rw_t "${home}/general"  &>/dev/null
     sudo chcon -R -t public_content_rw_t "${home}/${group}" &>/dev/null
@@ -287,7 +285,6 @@ _configurar_home() {
     grep -qF "$entry_grp" /etc/fstab \
         || printf '%s\n' "$entry_grp" | sudo tee -a /etc/fstab > /dev/null
 
-    # Proteger las tres carpetas principales contra renombrado/eliminacion
     proteger_carpetas_usuario "$user" "$group"
 }
 
@@ -310,7 +307,6 @@ modificar_grupo_usuario() {
         return 0
     fi
 
-    # Quitar inmutabilidad de la carpeta del grupo viejo para poder desmontarla
     if [[ -n "$old_group" ]]; then
         sudo chattr -i "${home}/${old_group}" 2>/dev/null
         sudo umount "${home}/${old_group}"    2>/dev/null
@@ -322,14 +318,17 @@ modificar_grupo_usuario() {
 
     sudo mkdir -p "${home}/${new_group}"
     sudo mount --bind "/srv/ftp/groups/${new_group}" "${home}/${new_group}"
-    aplicar_acl_heredable "${home}/${new_group}" "u:${user}" "rwx"
+
+    # FIX: ACLs despues del mount, con el grupo nuevo incluido
+    aplicar_acl_heredable "${home}/${new_group}" "u:${user}"      "rwx"
+    aplicar_acl_heredable "${home}/${new_group}" "g:${new_group}" "rwx"
+
     sudo chcon -R -t public_content_rw_t "${home}/${new_group}" &>/dev/null
 
     local entry_grp="/srv/ftp/groups/${new_group} ${home}/${new_group} none bind 0 0"
     grep -qF "$entry_grp" /etc/fstab \
         || printf '%s\n' "$entry_grp" | sudo tee -a /etc/fstab > /dev/null
 
-    # Re-proteger la nueva carpeta de grupo
     sudo chattr +i "${home}/${new_group}"
 
     echo "  [OK] '$user' movido de '${old_group:-ninguno}' a '$new_group'."
@@ -344,7 +343,6 @@ eliminar_usuario() {
         return 1
     fi
 
-    # Quitar inmutabilidad antes de eliminar
     desproteger_carpetas_usuario "$user" "reprobados"
     desproteger_carpetas_usuario "$user" "recursadores"
 
