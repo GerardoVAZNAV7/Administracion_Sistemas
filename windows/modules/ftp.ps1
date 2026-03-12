@@ -99,19 +99,17 @@ function _Aplicar_Permisos_Usuario {
 
 function _Eliminar_Junction {
     param([string]$Path)
-    # Verifica que existe y es un ReparsePoint (junction/symlink) antes de borrar
-    if (Test-Path $Path) {
-        $item = Get-Item $Path -Force -ErrorAction SilentlyContinue
-        if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-            # Usar cmd /c rmdir SIN /S para no borrar el contenido destino
-            $result = cmd /c "rmdir `"$Path`"" 2>&1
-            if (Test-Path $Path) {
-                # Si rmdir fallo, forzar con [System.IO.Directory]
-                [System.IO.Directory]::Delete($Path, $false) 2>$null
-            }
-        } elseif ($item) {
-            # Es carpeta real (no junction), borrar normalmente
-            Remove-Item $Path -Recurse -Force -ErrorAction SilentlyContinue
+    # rmdir funciona con junctions validos Y rotos (sin target)
+    # NO usar Test-Path como guard: los junctions rotos lo enganan
+    cmd /c "rmdir `"$Path`"" 2>&1 | Out-Null
+
+    # Verificar con Get-Item -Force (ve ReparsePoints aunque esten rotos)
+    $item = Get-Item $Path -Force -ErrorAction SilentlyContinue
+    if ($item) {
+        try { [System.IO.Directory]::Delete($Path, $false) } catch {}
+        $item2 = Get-Item $Path -Force -ErrorAction SilentlyContinue
+        if ($item2) {
+            Remove-Item $Path -Force -Recurse -ErrorAction SilentlyContinue
         }
     }
 }
@@ -166,7 +164,6 @@ function Cambiar_Grupo {
     $NuevoG = if ($G_Opt -eq "1") { "reprobados" } else { "recursadores" }
     $ViejoG = if ($G_Opt -eq "1") { "recursadores" } else { "reprobados" }
 
-    # Verificar que el usuario no este ya en el grupo destino
     $yaEnGrupo = Get-LocalGroupMember $NuevoG -ErrorAction SilentlyContinue |
                  Where-Object { $_.Name -match "\\$User$" }
     if ($yaEnGrupo) {
@@ -174,63 +171,48 @@ function Cambiar_Grupo {
         return
     }
 
-    # Cambiar membresia de grupo
+    # Cambiar membresia
     Remove-LocalGroupMember -Group $ViejoG -Member $User -ErrorAction SilentlyContinue
     Add-LocalGroupMember    -Group $NuevoG -Member $User -ErrorAction SilentlyContinue
 
     $UserHome = Join-Path $Global:LOCAL_USER $User
 
-    # ── Detener ftpsvc para liberar handles sobre los junctions ──
-    Write-Host "[+] Deteniendo ftpsvc para liberar handles..." -ForegroundColor Cyan
+    # Detener ftpsvc para liberar handles sobre los junctions
+    Write-Host "[+] Deteniendo ftpsvc..." -ForegroundColor Cyan
     Stop-Service ftpsvc -Force -ErrorAction SilentlyContinue
-    #TENGO QUE BORRAR ESTO DESPUES
-    # ── DIAGNOSTICO TEMPORAL - borrar despues ──
-Write-Host "`n=== ESTADO DEL DIRECTORIO DEL USUARIO ===" -ForegroundColor Yellow
-Write-Host "UserHome: $UserHome"
-Write-Host "Existe UserHome: $(Test-Path $UserHome)"
-Get-ChildItem $UserHome -Force -ErrorAction SilentlyContinue | ForEach-Object {
-    $esJunction = ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0
-    Write-Host "  $($_.Name)  [Junction=$esJunction]  Atributos=$($_.Attributes)"
-    if ($esJunction) {
-        $target = cmd /c "fsutil reparsepoint query `"$($_.FullName)`"" 2>&1 | Select-String "Print Name"
-        Write-Host "    -> Target: $target"
-    }
-}
-Write-Host "==========================================`n" -ForegroundColor Yellow
     Start-Sleep -Seconds 2
 
-    # ── Eliminar TODOS los junctions de grupo (reprobados y recursadores) por si hay residuos ──
+    # Eliminar ambos junctions (validos y rotos)
     foreach ($g in @("reprobados", "recursadores")) {
         $jPath = Join-Path $UserHome $g
-        if (Test-Path $jPath) {
-            Write-Host "[+] Eliminando junction '$g'..." -ForegroundColor Cyan
-            _Eliminar_Junction -Path $jPath
-            if (Test-Path $jPath) {
-                Write-Host "    [!] No se pudo eliminar $jPath" -ForegroundColor Red
-            } else {
-                Write-Host "    [OK] Junction '$g' eliminada." -ForegroundColor Green
-            }
-        }
-    }
-
-    # ── Crear SOLO el junction del grupo nuevo ──
-    $junctionNuevo = Join-Path $UserHome $NuevoG
-    if (!(Test-Path $junctionNuevo)) {
-        $mkResult = cmd /c "mklink /D `"$junctionNuevo`" `"$Global:BASE_DATA\$NuevoG`"" 2>&1
-        if (Test-Path $junctionNuevo) {
-            Write-Host "    [OK] Junction '$NuevoG' creada -> $Global:BASE_DATA\$NuevoG" -ForegroundColor Green
+        _Eliminar_Junction -Path $jPath
+        $queda = Get-Item $jPath -Force -ErrorAction SilentlyContinue
+        if ($queda) {
+            Write-Host "    [!] No se pudo eliminar junction '$g'" -ForegroundColor Red
         } else {
-            Write-Host "    [!] ERROR creando junction '$NuevoG': $mkResult" -ForegroundColor Red
+            Write-Host "    [OK] Junction '$g' limpia." -ForegroundColor Green
         }
-    } else {
-        Write-Host "    [OK] Junction '$NuevoG' ya existe." -ForegroundColor Green
     }
 
-    # ── Revocar permisos NTFS del grupo viejo, aplicar los del nuevo ──
-    icacls "$Global:BASE_DATA\$ViejoG" /remove "${User}" /T /Q | Out-Null
+    # Crear SOLO el junction del grupo nuevo
+    $junctionNuevo = Join-Path $UserHome $NuevoG
+    cmd /c "mklink /D `"$junctionNuevo`" `"$Global:BASE_DATA\$NuevoG`"" 2>&1 | Out-Null
+    $creado = Get-Item $junctionNuevo -Force -ErrorAction SilentlyContinue
+    if ($creado -and ($creado.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        Write-Host "    [OK] Junction '$NuevoG' creada -> $Global:BASE_DATA\$NuevoG" -ForegroundColor Green
+    } else {
+        Write-Host "    [!] ERROR: no se pudo crear junction '$NuevoG'" -ForegroundColor Red
+    }
+
+    # Revocar permisos NTFS del usuario sobre la carpeta del grupo VIEJO
+    # /remove:g = quitar grants, /remove:d = quitar denies
+    icacls "$Global:BASE_DATA\$ViejoG" /remove:g "${User}" /T /Q | Out-Null
+    icacls "$Global:BASE_DATA\$ViejoG" /remove:d "${User}" /T /Q | Out-Null
+
+    # Aplicar permisos correctos para el grupo nuevo
     _Aplicar_Permisos_Usuario -User $User -Grupo $NuevoG -UserHome $UserHome
 
-    # ── Reiniciar ftpsvc para que IIS refresque los junctions ──
+    # Reiniciar ftpsvc
     Write-Host "[+] Reiniciando ftpsvc..." -ForegroundColor Cyan
     Start-Service ftpsvc -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
