@@ -1,5 +1,5 @@
 # =============================================================================
-# cleanup_windows.ps1 — Limpieza profunda para Windows Server 2022
+# cleanup_windows.ps1 - Limpieza profunda para Windows Server 2022
 # Deja el sistema listo para ejecutar main_windows.ps1 desde cero
 # Uso: Ejecutar como Administrador en PowerShell
 # =============================================================================
@@ -14,9 +14,9 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force -ErrorAction SilentlyContinue
 
 Write-Host ""
-Write-Host "  ╔═════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "  ║   Limpieza Profunda — Windows Server 2022  ║" -ForegroundColor Cyan
-Write-Host "  ╚═════════════════════════════════════════════╝" -ForegroundColor Cyan
+Write-Host "  +=============================================+" -ForegroundColor Cyan
+Write-Host "  |   Limpieza Profunda - Windows Server 2022  |" -ForegroundColor Cyan
+Write-Host "  +=============================================+" -ForegroundColor Cyan
 Write-Host ""
 
 # =============================================================================
@@ -38,7 +38,7 @@ foreach ($proc in $procesos) {
 Start-Sleep -Seconds 2
 
 # =============================================================================
-# 2. LIMPIAR IIS — SITIOS CREADOS POR SCRIPTS ANTERIORES
+# 2. LIMPIAR IIS - SITIOS CREADOS POR SCRIPTS ANTERIORES
 # =============================================================================
 Write-Host "[2/7] Limpiando sitios IIS de scripts anteriores..." -ForegroundColor Yellow
 
@@ -59,7 +59,7 @@ try {
             Write-Host "  [OK] Sitio '$($sitio.Name)' eliminado." -ForegroundColor Green
         }
 
-        # Detener también el Default Web Site para dejar IIS limpio
+        # Detener tambien el Default Web Site para dejar IIS limpio
         if (Get-Website -Name "Default Web Site" -ErrorAction SilentlyContinue) {
             Stop-Website -Name "Default Web Site" -ErrorAction SilentlyContinue
             Write-Host "  [OK] Default Web Site detenido." -ForegroundColor DarkGray
@@ -96,8 +96,8 @@ foreach ($patron in $patronesIIS) {
     }
 }
 
-# Limpiar directorios de Apache extraídos por scripts anteriores
-# (NO eliminar los ZIPs, solo las carpetas extraídas)
+# Limpiar directorios de Apache extraidos por scripts anteriores
+# (NO eliminar los ZIPs, solo las carpetas extraidas)
 $patronesApache = @("C:\Apache24", "C:\apache_*")
 foreach ($patron in $patronesApache) {
     $dirs = Get-Item $patron -ErrorAction SilentlyContinue
@@ -110,7 +110,7 @@ foreach ($patron in $patronesApache) {
     }
 }
 
-# Limpiar directorios de Nginx extraídos por scripts anteriores
+# Limpiar directorios de Nginx extraidos por scripts anteriores
 $patronesNginx = @("C:\nginx*", "C:\nginx_server")
 foreach ($patron in $patronesNginx) {
     $dirs = Get-Item $patron -ErrorAction SilentlyContinue
@@ -155,7 +155,7 @@ if ($eliminadas -eq 0) {
 }
 
 # =============================================================================
-# 5. VERIFICAR QUE LOS PUERTOS HTTP ESTÉN LIBRES
+# 5. VERIFICAR QUE LOS PUERTOS HTTP ESTEN LIBRES
 # =============================================================================
 Write-Host "[5/7] Verificando puertos HTTP..." -ForegroundColor Yellow
 
@@ -166,9 +166,9 @@ foreach ($p in $puertosVerificar) {
     $conn = Test-NetConnection -ComputerName localhost -Port $p `
                 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
     if ($conn.TcpTestSucceeded) {
-        Write-Host "  [!] ADVERTENCIA: Puerto $p todavía en uso." -ForegroundColor Yellow
+        Write-Host "  [!] ADVERTENCIA: Puerto $p todavia en uso." -ForegroundColor Yellow
 
-        # Intentar identificar qué proceso usa el puerto
+        # Intentar identificar que proceso usa el puerto
         $netstat = netstat -ano 2>/dev/null | Select-String ":$p\s"
         if ($netstat) {
             Write-Host "       $netstat" -ForegroundColor DarkGray
@@ -180,11 +180,11 @@ foreach ($p in $puertosVerificar) {
 }
 
 if ($todoLibre) {
-    Write-Host "  [OK] Todos los puertos HTTP verificados están libres." -ForegroundColor Green
+    Write-Host "  [OK] Todos los puertos HTTP verificados estan libres." -ForegroundColor Green
 }
 
 # =============================================================================
-# 6. VERIFICAR QUE LOS ZIPs ESTÁN LISTOS EN C:\
+# 6. VERIFICAR QUE LOS ZIPs ESTAN LISTOS EN C:\
 # =============================================================================
 Write-Host "[6/7] Verificando ZIPs disponibles en C:\..." -ForegroundColor Yellow
 
@@ -201,16 +201,16 @@ $zipsFaltantes = 0
 foreach ($zip in $zipsEsperados) {
     if (Test-Path $zip.path) {
         $size = [math]::Round((Get-Item $zip.path).Length / 1MB, 1)
-        Write-Host "  [OK] $($zip.nombre) — $($zip.path) ($size MB)" -ForegroundColor Green
+        Write-Host "  [OK] $($zip.nombre) - $($zip.path) ($size MB)" -ForegroundColor Green
     } else {
-        Write-Host "  [!] FALTANTE: $($zip.path) — $($zip.nombre)" -ForegroundColor Red
+        Write-Host "  [!] FALTANTE: $($zip.path) - $($zip.nombre)" -ForegroundColor Red
         $zipsFaltantes++
     }
 }
 
 if ($zipsFaltantes -gt 0) {
     Write-Host ""
-    Write-Host "  [!] Faltan $zipsFaltantes ZIPs. El script funcionará solo con los que existan." -ForegroundColor Yellow
+    Write-Host "  [!] Faltan $zipsFaltantes ZIPs. El script funcionara solo con los que existan." -ForegroundColor Yellow
 }
 
 # =============================================================================
@@ -231,12 +231,12 @@ Write-Host "  [OK] Limpieza final completada." -ForegroundColor Green
 # RESUMEN FINAL
 # =============================================================================
 Write-Host ""
-Write-Host "  ╔═════════════════════════════════════════════╗" -ForegroundColor Green
-Write-Host "  ║        ✅  Limpieza Completada              ║" -ForegroundColor Green
-Write-Host "  ╠═════════════════════════════════════════════╣" -ForegroundColor Green
-Write-Host "  ║  El sistema está listo para:                ║" -ForegroundColor Green
-Write-Host "  ║  .\main_windows.ps1                         ║" -ForegroundColor Green
-Write-Host "  ╚═════════════════════════════════════════════╝" -ForegroundColor Green
+Write-Host "  +=============================================+" -ForegroundColor Green
+Write-Host "  |        [OK]  Limpieza Completada              |" -ForegroundColor Green
+Write-Host "  +=============================================+" -ForegroundColor Green
+Write-Host "  |  El sistema esta listo para:                |" -ForegroundColor Green
+Write-Host "  |  .\main_windows.ps1                         |" -ForegroundColor Green
+Write-Host "  +=============================================+" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Estado actual de puertos en escucha:" -ForegroundColor Cyan
 netstat -ano 2>/dev/null | Select-String "LISTENING" | `
