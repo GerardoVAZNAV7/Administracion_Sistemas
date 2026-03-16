@@ -502,17 +502,82 @@ function Instalar-Apache-Win {
     Crear-Index -Ruta $htdocs -Servicio "Apache HTTP Server (Windows)" -Version $version -Puerto $Puerto
     Configurar-Firewall -Puerto $Puerto -Nombre "Apache"
 
-    Write-Host "  [*] Iniciando Apache $version en puerto $Puerto..." -ForegroundColor DarkGray
-    Start-Process -FilePath "$destBase\bin\httpd.exe" -WorkingDirectory "$destBase\bin" -WindowStyle Hidden
-    Start-Sleep -Seconds 3
+    # Apache para Windows requiere Visual C++ Redistributable 2015-2022 (VCRUNTIME140.dll)
+    # Si no esta instalado, httpd.exe falla con "VCRUNTIME140.dll was not found"
+    _Instalar-VCRedist
 
-    Write-Host ""
-    Write-Host "  +==================================================+" -ForegroundColor Green
-    Write-Host "  |  [OK] Apache activo                              |" -ForegroundColor Green
-    Write-Host "  |  URL : http://${VM_IP}:${Puerto}                 |" -ForegroundColor Green
-    Write-Host "  |  Version: $version                               |" -ForegroundColor Green
-    Write-Host "  +==================================================+" -ForegroundColor Green
+    Write-Host "  [*] Iniciando Apache $version en puerto $Puerto..." -ForegroundColor DarkGray
+    $proc = Start-Process -FilePath "$destBase\bin\httpd.exe" `
+                          -WorkingDirectory "$destBase\bin" `
+                          -WindowStyle Hidden -PassThru
+    Start-Sleep -Seconds 2
+
+    # Verificar que el proceso sigue vivo (si falta DLL muere de inmediato)
+    if ($proc.HasExited) {
+        Write-Host "  [!] httpd.exe termino inesperadamente (codigo: $($proc.ExitCode))." -ForegroundColor Red
+        Write-Host "  [!] Causa probable: falta VCRUNTIME140.dll o error en httpd.conf" -ForegroundColor Yellow
+        Write-Host "       Revisa: $destBase\logs\error.log" -ForegroundColor Yellow
+        # Intentar mostrar las ultimas lineas del log si existe
+        $errLog = "$destBase\logs\error.log"
+        if (Test-Path $errLog) {
+            Write-Host "  --- Ultimas lineas de error.log ---" -ForegroundColor Yellow
+            Get-Content $errLog -Tail 10 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+        }
+        return
+    }
+
+    # Esperar hasta 10s a que el puerto responda
+    $i = 0
+    while ($i -lt 10) {
+        Start-Sleep -Seconds 1
+        if (netstat -ano 2>$null | Select-String ":$Puerto ") { break }
+        $i++
+    }
+
+    if (netstat -ano 2>$null | Select-String ":$Puerto ") {
+        Write-Host ""
+        Write-Host "  +==================================================+" -ForegroundColor Green
+        Write-Host "  |  [OK] Apache activo                              |" -ForegroundColor Green
+        Write-Host "  |  URL : http://${VM_IP}:${Puerto}                 |" -ForegroundColor Green
+        Write-Host "  |  Version: $version                               |" -ForegroundColor Green
+        Write-Host "  +==================================================+" -ForegroundColor Green
+    } else {
+        Write-Host "  [!] Apache inicio pero el puerto $Puerto no responde aun." -ForegroundColor Yellow
+        Write-Host "       Revisa: $destBase\logs\error.log" -ForegroundColor Yellow
+    }
     Verificar-Servicio -Servicio "httpd" -Puerto $Puerto
+}
+
+function _Instalar-VCRedist {
+    # Verificar si VCRUNTIME140.dll ya esta presente en el sistema
+    $vcDll = Get-ChildItem "C:\Windows\System32\VCRUNTIME140.dll" -ErrorAction SilentlyContinue
+    if ($vcDll) {
+        Write-Host "  [OK] VCRUNTIME140.dll encontrado - no requiere instalacion." -ForegroundColor DarkGray
+        return
+    }
+
+    Write-Host "  [!] VCRUNTIME140.dll no encontrado." -ForegroundColor Yellow
+    Write-Host "  [*] Descargando Visual C++ Redistributable 2015-2022 (x64)..." -ForegroundColor Cyan
+
+    $vcUrl  = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+    $vcExe  = "$env:TEMP\vc_redist.x64.exe"
+
+    try {
+        Invoke-WebRequest -Uri $vcUrl -OutFile $vcExe -UseBasicParsing -ErrorAction Stop
+        Write-Host "  [*] Instalando VC++ Redistributable (silencioso)..." -ForegroundColor DarkGray
+        $p = Start-Process -FilePath $vcExe -ArgumentList "/install /quiet /norestart" -Wait -PassThru
+        Remove-Item $vcExe -Force -ErrorAction SilentlyContinue
+
+        if ($p.ExitCode -eq 0 -or $p.ExitCode -eq 3010) {
+            Write-Host "  [OK] VC++ Redistributable instalado correctamente." -ForegroundColor Green
+        } else {
+            Write-Host "  [!] Instalacion termino con codigo $($p.ExitCode)." -ForegroundColor Yellow
+        }
+    } catch {
+        Write-Host "  [!] No se pudo descargar VC++ Redistributable: $_" -ForegroundColor Red
+        Write-Host "       Descargalo manualmente: https://aka.ms/vs/17/release/vc_redist.x64.exe" -ForegroundColor Yellow
+        Write-Host "       Instala y vuelve a ejecutar el script." -ForegroundColor Yellow
+    }
 }
 
 # =============================================================================
@@ -583,16 +648,56 @@ http {
     Crear-Index -Ruta $htmlDir -Servicio "Nginx (Windows)" -Version $version -Puerto $Puerto
     Configurar-Firewall -Puerto $Puerto -Nombre "Nginx"
 
-    Write-Host "  [*] Iniciando Nginx $version en puerto $Puerto..." -ForegroundColor DarkGray
-    Start-Process -FilePath "$destBase\nginx.exe" -WorkingDirectory $destBase
-    Start-Sleep -Seconds 3
+    # Validar nginx.conf antes de lanzar
+    Write-Host "  [*] Validando nginx.conf..." -ForegroundColor DarkGray
+    $testResult = & "$destBase\nginx.exe" -t -p "$destBase" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [!] Error en nginx.conf:" -ForegroundColor Red
+        $testResult | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        return
+    }
+    Write-Host "  [OK] nginx.conf valido." -ForegroundColor DarkGray
 
-    Write-Host ""
-    Write-Host "  +==================================================+" -ForegroundColor Green
-    Write-Host "  |  [OK] Nginx activo                               |" -ForegroundColor Green
-    Write-Host "  |  URL : http://${VM_IP}:${Puerto}                 |" -ForegroundColor Green
-    Write-Host "  |  Version: $version                               |" -ForegroundColor Green
-    Write-Host "  +==================================================+" -ForegroundColor Green
+    Write-Host "  [*] Iniciando Nginx $version en puerto $Puerto..." -ForegroundColor DarkGray
+    $proc = Start-Process -FilePath "$destBase\nginx.exe" `
+                          -WorkingDirectory $destBase `
+                          -PassThru
+    Start-Sleep -Seconds 2
+
+    # Verificar que el proceso no murio de inmediato
+    if ($proc.HasExited) {
+        Write-Host "  [!] nginx.exe termino inesperadamente." -ForegroundColor Red
+        $errLog = "$destBase\logs\error.log"
+        if (Test-Path $errLog) {
+            Write-Host "  --- Ultimas lineas de error.log ---" -ForegroundColor Yellow
+            Get-Content $errLog -Tail 10 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+        }
+        return
+    }
+
+    # Esperar hasta 10s a que el puerto responda
+    $i = 0
+    while ($i -lt 10) {
+        Start-Sleep -Seconds 1
+        if (netstat -ano 2>$null | Select-String ":$Puerto ") { break }
+        $i++
+    }
+
+    if (netstat -ano 2>$null | Select-String ":$Puerto ") {
+        Write-Host ""
+        Write-Host "  +==================================================+" -ForegroundColor Green
+        Write-Host "  |  [OK] Nginx activo                               |" -ForegroundColor Green
+        Write-Host "  |  URL : http://${VM_IP}:${Puerto}                 |" -ForegroundColor Green
+        Write-Host "  |  Version: $version                               |" -ForegroundColor Green
+        Write-Host "  +==================================================+" -ForegroundColor Green
+    } else {
+        Write-Host "  [!] Nginx inicio pero el puerto $Puerto no responde." -ForegroundColor Yellow
+        $errLog = "$destBase\logs\error.log"
+        if (Test-Path $errLog) {
+            Write-Host "  --- Ultimas lineas de error.log ---" -ForegroundColor Yellow
+            Get-Content $errLog -Tail 10 | ForEach-Object { Write-Host "  $_" -ForegroundColor DarkGray }
+        }
+    }
     Verificar-Servicio -Servicio "nginx" -Puerto $Puerto
 }
 
