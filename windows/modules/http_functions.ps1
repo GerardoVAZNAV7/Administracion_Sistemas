@@ -152,16 +152,6 @@
 #     }
 # }
 
-# function Liberar-Entorno-Win {
-#     Write-Host "Liberando entorno y matando procesos..." -ForegroundColor Red
-#     Stop-Process -Name "httpd", "nginx" -Force -ErrorAction SilentlyContinue
-#     if (Get-Service W3SVC -ErrorAction SilentlyContinue) { 
-#         Stop-Service W3SVC -Force -ErrorAction SilentlyContinue 
-#     }
-#     Write-Host "Limpieza de entorno completada. Puertos liberados." -ForegroundColor Green
-# }
-
-
 # =============================================================================
 # http_functions.ps1 - Funciones para aprovisionamiento HTTP en Windows Server 2022
 # Uso: . .\http_functions.ps1  (dot-source desde main_windows.ps1)
@@ -643,7 +633,9 @@ http {
     }
 }
 "@
-    $nginxConf | Out-File "$destBase\conf\nginx.conf" -Encoding utf8
+    # Escribir sin BOM - PowerShell 5 con Out-File utf8 agrega BOM y Nginx falla
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText("$destBase\conf\nginx.conf", $nginxConf, $utf8NoBom)
 
     Crear-Index -Ruta $htmlDir -Servicio "Nginx (Windows)" -Version $version -Puerto $Puerto
     Configurar-Firewall -Puerto $Puerto -Nombre "Nginx"
