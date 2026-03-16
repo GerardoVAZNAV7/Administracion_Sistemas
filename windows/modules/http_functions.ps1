@@ -163,18 +163,18 @@
 
 
 # =============================================================================
-# http_functions.ps1 — Funciones para aprovisionamiento HTTP en Windows Server 2022
+# http_functions.ps1 - Funciones para aprovisionamiento HTTP en Windows Server 2022
 # Uso: . .\http_functions.ps1  (dot-source desde main_windows.ps1)
 # =============================================================================
 
 # IP de la VM Windows (adaptador host-only)
 $VM_IP = "192.168.56.102"
 
-# Ruta base donde están los ZIPs preDescargados en C:\
+# Ruta base donde estan los ZIPs preDescargados en C:\
 # Los ZIPs deben existir como: C:\apache_2.4.64.zip, C:\nginx_1.26.3.zip, etc.
 $ZIP_BASE = "C:\"
 
-# Versiones disponibles (los ZIPs ya están en C:\ según la foto del host)
+# Versiones disponibles (los ZIPs ya estan en C:\ segun la foto del host)
 $APACHE_VERSIONES = @(
     @{ num = "1"; version = "2.4.66"; etiqueta = "Latest"  },
     @{ num = "2"; version = "2.4.65"; etiqueta = "Stable"  },
@@ -200,7 +200,7 @@ $SERVICIOS_RESERVADOS = @{
 }
 
 # =============================================================================
-# FUNCIÓN: Validar y solicitar puerto
+# FUNCION: Validar y solicitar puerto
 # Devuelve el puerto como entero o $null si se cancela
 # =============================================================================
 function Solicitar-Puerto {
@@ -209,15 +209,15 @@ function Solicitar-Puerto {
     while ($true) {
         $input_puerto = Read-Host "  Puerto para $ServicioNombre (ej. 80, 8080, 9090)"
 
-        # Validar que sea solo dígitos
+        # Validar que sea solo digitos
         if ($input_puerto -notmatch '^\d+$') {
-            Write-Host "  [!] Solo se permiten números. Intenta de nuevo." -ForegroundColor Red
+            Write-Host "  [!] Solo se permiten numeros. Intenta de nuevo." -ForegroundColor Red
             continue
         }
 
         $p = [int]$input_puerto
 
-        # Rango válido
+        # Rango valido
         if ($p -le 0 -or $p -gt 65535) {
             Write-Host "  [!] Puerto fuera de rango (1-65535)." -ForegroundColor Red
             continue
@@ -225,7 +225,7 @@ function Solicitar-Puerto {
 
         # Puerto reservado del sistema
         if ($PUERTOS_RESERVADOS -contains $p) {
-            $desc = if ($SERVICIOS_RESERVADOS.ContainsKey($p)) { $SERVICIOS_RESERVADOS[$p] } else { "Sistema Crítico" }
+            $desc = if ($SERVICIOS_RESERVADOS.ContainsKey($p)) { $SERVICIOS_RESERVADOS[$p] } else { "Sistema Critico" }
             Write-Host "  [!] Puerto $p reservado para $desc. Elige otro." -ForegroundColor Red
             continue
         }
@@ -233,17 +233,17 @@ function Solicitar-Puerto {
         # Puerto ya en uso
         $enUso = Test-NetConnection -ComputerName localhost -Port $p -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
         if ($enUso.TcpTestSucceeded) {
-            Write-Host "  [!] Puerto $p ya está en uso por otro proceso." -ForegroundColor Red
+            Write-Host "  [!] Puerto $p ya esta en uso por otro proceso." -ForegroundColor Red
             continue
         }
 
-        # Puerto válido
+        # Puerto valido
         return $p
     }
 }
 
 # =============================================================================
-# FUNCIÓN: Crear página index.html personalizada
+# FUNCION: Crear pagina index.html personalizada
 # =============================================================================
 function Crear-Index {
     param(
@@ -262,7 +262,7 @@ function Crear-Index {
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>$Servicio — Puerto $Puerto</title>
+  <title>$Servicio - Puerto $Puerto</title>
   <style>
     body { font-family: Arial, sans-serif; background: #1a1a2e; color: #eee;
            display: flex; justify-content: center; align-items: center;
@@ -291,7 +291,7 @@ function Crear-Index {
 }
 
 # =============================================================================
-# FUNCIÓN: Configurar firewall de Windows
+# FUNCION: Configurar firewall de Windows
 # =============================================================================
 function Configurar-Firewall {
     param([int]$Puerto, [string]$Nombre)
@@ -313,7 +313,7 @@ function Configurar-Firewall {
 }
 
 # =============================================================================
-# FUNCIÓN: Instalar IIS (nativo de Windows Server)
+# FUNCION: Instalar IIS (nativo de Windows Server)
 # =============================================================================
 function Instalar-IIS {
     param([int]$Puerto)
@@ -321,12 +321,12 @@ function Instalar-IIS {
     Write-Host ""
     Write-Host "  [*] Instalando IIS en puerto $Puerto..." -ForegroundColor Cyan
 
-    # Instalar feature IIS con herramientas de administración
+    # Instalar feature IIS con herramientas de administracion
     Write-Host "  [*] Instalando Windows Feature Web-Server..." -ForegroundColor DarkGray
     Install-WindowsFeature -Name Web-Server -IncludeManagementTools -IncludeAllSubFeature `
         -ErrorAction Stop | Out-Null
 
-    # Asegurar que el módulo WebAdministration está disponible
+    # Asegurar que el modulo WebAdministration esta disponible
     Import-Module WebAdministration -ErrorAction Stop
 
     # Detener el Default Web Site para liberar el puerto 80
@@ -345,14 +345,14 @@ function Instalar-IIS {
         Write-Host "  [OK] Sitio anterior '$siteName' eliminado." -ForegroundColor DarkGray
     }
 
-    # Crear directorio físico
+    # Crear directorio fisico
     New-Item -Path $sitePath -ItemType Directory -Force | Out-Null
 
-    # Obtener versión instalada de IIS
+    # Obtener version instalada de IIS
     $iisVersion = (Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\InetStp" -ErrorAction SilentlyContinue).VersionString
     if (-not $iisVersion) { $iisVersion = "10.0" }
 
-    # Crear página de prueba
+    # Crear pagina de prueba
     Crear-Index -Ruta $sitePath -Servicio "IIS (Internet Information Services)" `
                 -Version $iisVersion -Puerto $Puerto
 
@@ -360,7 +360,7 @@ function Instalar-IIS {
     New-Website -Name $siteName -Port $Puerto -PhysicalPath $sitePath -Force | Out-Null
     Start-Website -Name $siteName -ErrorAction SilentlyContinue
 
-    # ── Hardening IIS ──────────────────────────────────────────────────────────
+    # -- Hardening IIS ----------------------------------------------------------
     _IIS_Hardening -SiteName $siteName
 
     # Firewall
@@ -381,13 +381,13 @@ function Instalar-IIS {
                 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
     if ($conn.TcpTestSucceeded) {
         Write-Host ""
-        Write-Host "  ╔══════════════════════════════════════════════════╗" -ForegroundColor Green
-        Write-Host "  ║  [OK] IIS activo                                 ║" -ForegroundColor Green
-        Write-Host "  ║  URL: http://${VM_IP}:${Puerto}                  ║" -ForegroundColor Green
-        Write-Host "  ║  Versión IIS: $iisVersion                        ║" -ForegroundColor Green
-        Write-Host "  ╚══════════════════════════════════════════════════╝" -ForegroundColor Green
+        Write-Host "  +==================================================+" -ForegroundColor Green
+        Write-Host "  |  [OK] IIS activo                                 |" -ForegroundColor Green
+        Write-Host "  |  URL: http://${VM_IP}:${Puerto}                  |" -ForegroundColor Green
+        Write-Host "  |  Version IIS: $iisVersion                        |" -ForegroundColor Green
+        Write-Host "  +==================================================+" -ForegroundColor Green
     } else {
-        Write-Host "  [!] IIS no respondió en el puerto $Puerto. Revisa el Event Viewer." -ForegroundColor Red
+        Write-Host "  [!] IIS no respondio en el puerto $Puerto. Revisa el Event Viewer." -ForegroundColor Red
     }
 }
 
@@ -403,7 +403,7 @@ function _IIS_Hardening {
             -Name "." -AtElement @{name="X-Powered-By"} -ErrorAction SilentlyContinue
     } catch {}
 
-    # Eliminar encabezado Server (requiere módulo URL Rewrite o configuración directa)
+    # Eliminar encabezado Server (requiere modulo URL Rewrite o configuracion directa)
     try {
         Set-WebConfigurationProperty -PSPath "IIS:\Sites\$SiteName" `
             -Filter "system.webServer/security/requestFiltering" `
@@ -430,7 +430,7 @@ function _IIS_Hardening {
         } catch {}
     }
 
-    # Deshabilitar métodos HTTP peligrosos (TRACE, TRACK, DELETE)
+    # Deshabilitar metodos HTTP peligrosos (TRACE, TRACK, DELETE)
     try {
         $verbsFilter = "system.webServer/security/requestFiltering/verbs"
         foreach ($verb in @("TRACE","TRACK","DELETE","PUT","OPTIONS")) {
@@ -440,11 +440,11 @@ function _IIS_Hardening {
         }
     } catch {}
 
-    Write-Host "  [OK] Hardening IIS completado (headers de seguridad + métodos bloqueados)." -ForegroundColor Green
+    Write-Host "  [OK] Hardening IIS completado (headers de seguridad + metodos bloqueados)." -ForegroundColor Green
 }
 
 # =============================================================================
-# FUNCIÓN: Instalar Apache para Windows (desde ZIP preDescargado en C:\)
+# FUNCION: Instalar Apache para Windows (desde ZIP preDescargado en C:\)
 # =============================================================================
 function Instalar-Apache-Win {
     param([int]$Puerto)
@@ -461,30 +461,30 @@ function Instalar-Apache-Win {
     }
 
     Write-Host ""
-    $sel = Read-Host "  Selecciona la versión (1-3)"
+    $sel = Read-Host "  Selecciona la version (1-3)"
 
-    # Validar selección
+    # Validar seleccion
     if ($sel -notmatch '^[1-3]$') {
-        Write-Host "  [!] Selección inválida. Usando versión 1 (Latest)." -ForegroundColor Yellow
+        Write-Host "  [!] Seleccion invalida. Usando version 1 (Latest)." -ForegroundColor Yellow
         $sel = "1"
     }
 
     $entrada = $APACHE_VERSIONES | Where-Object { $_.num -eq $sel } | Select-Object -First 1
     $version  = $entrada.version
     $zipPath  = "${ZIP_BASE}apache_${version}.zip"
-    $destBase = "C:\apache_$version"        # La carpeta extraída tiene el nombre con versión
+    $destBase = "C:\apache_$version"        # La carpeta extraida tiene el nombre con version
 
     Write-Host ""
-    Write-Host "  [*] Versión seleccionada: Apache $version" -ForegroundColor White
+    Write-Host "  [*] Version seleccionada: Apache $version" -ForegroundColor White
 
     # Verificar que el ZIP existe
     if (-not (Test-Path $zipPath)) {
-        Write-Host "  [!] ERROR: No se encontró el archivo $zipPath" -ForegroundColor Red
-        Write-Host "       Asegúrate de que el ZIP esté en C:\" -ForegroundColor Yellow
+        Write-Host "  [!] ERROR: No se encontro el archivo $zipPath" -ForegroundColor Red
+        Write-Host "       Asegurate de que el ZIP este en C:\" -ForegroundColor Yellow
         return
     }
 
-    # Detener instancia previa de Apache si está corriendo
+    # Detener instancia previa de Apache si esta corriendo
     $procApache = Get-Process -Name "httpd" -ErrorAction SilentlyContinue
     if ($procApache) {
         Write-Host "  [*] Deteniendo instancia previa de Apache..." -ForegroundColor DarkGray
@@ -507,8 +507,8 @@ function Instalar-Apache-Win {
         return
     }
 
-    # El ZIP puede extraer como Apache24 o apache_2.4.66 según cómo fue empaquetado
-    # Intentar ambas posibilidades y renombrar al formato con versión
+    # El ZIP puede extraer como Apache24 o apache_2.4.66 segun como fue empaquetado
+    # Intentar ambas posibilidades y renombrar al formato con version
     $posibles = @("C:\Apache24", "C:\apache_$version", "C:\Apache_$version")
     $carpetaExtraida = $null
     foreach ($p in $posibles) {
@@ -525,14 +525,14 @@ function Instalar-Apache-Win {
 
     # Verificar que el directorio destino existe
     if (-not (Test-Path $destBase)) {
-        Write-Host "  [!] ERROR: No se encontró el directorio $destBase tras extraer." -ForegroundColor Red
+        Write-Host "  [!] ERROR: No se encontro el directorio $destBase tras extraer." -ForegroundColor Red
         Write-Host "       Verifica el contenido del ZIP." -ForegroundColor Yellow
         return
     }
 
     $conf = "$destBase\conf\httpd.conf"
     if (-not (Test-Path $conf)) {
-        Write-Host "  [!] ERROR: No se encontró httpd.conf en $conf" -ForegroundColor Red
+        Write-Host "  [!] ERROR: No se encontro httpd.conf en $conf" -ForegroundColor Red
         return
     }
 
@@ -543,15 +543,15 @@ function Instalar-Apache-Win {
     $content = $content -replace '^Listen\s+\d+', "Listen $Puerto"
     $content = $content -replace '^#?ServerName\s+.*', "ServerName localhost:$Puerto"
 
-    # Hardening: ocultar versión
+    # Hardening: ocultar version
     $content = $content -replace '^#?ServerTokens\s+.*', "ServerTokens Prod"
     $content = $content -replace '^#?ServerSignature\s+.*', "ServerSignature Off"
 
-    # Deshabilitar métodos peligrosos (agregar al final del conf)
+    # Deshabilitar metodos peligrosos (agregar al final del conf)
     $hasTraceBlock = $content | Where-Object { $_ -match "TraceEnable" }
     if (-not $hasTraceBlock) {
         $content += ""
-        $content += "# Hardening — deshabilitar metodos peligrosos"
+        $content += "# Hardening - deshabilitar metodos peligrosos"
         $content += "TraceEnable Off"
     }
 
@@ -560,7 +560,7 @@ function Instalar-Apache-Win {
     # Agregar security headers en httpd.conf
     _Apache_Win_SecurityHeaders -ConfPath $conf
 
-    # Crear página de prueba en htdocs
+    # Crear pagina de prueba en htdocs
     $htdocs = "$destBase\htdocs"
     if (-not (Test-Path $htdocs)) { New-Item -Path $htdocs -ItemType Directory -Force | Out-Null }
     Crear-Index -Ruta $htdocs -Servicio "Apache HTTP Server (Windows)" `
@@ -582,18 +582,18 @@ function Instalar-Apache-Win {
 
     Start-Sleep -Seconds 3
 
-    # Verificar que está escuchando
+    # Verificar que esta escuchando
     $conn = Test-NetConnection -ComputerName localhost -Port $Puerto `
                 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
     if ($conn.TcpTestSucceeded) {
         Write-Host ""
-        Write-Host "  ╔══════════════════════════════════════════════════╗" -ForegroundColor Green
-        Write-Host "  ║  [OK] Apache Windows activo                      ║" -ForegroundColor Green
-        Write-Host "  ║  URL: http://${VM_IP}:${Puerto}                  ║" -ForegroundColor Green
-        Write-Host "  ║  Versión: $version                               ║" -ForegroundColor Green
-        Write-Host "  ╚══════════════════════════════════════════════════╝" -ForegroundColor Green
+        Write-Host "  +==================================================+" -ForegroundColor Green
+        Write-Host "  |  [OK] Apache Windows activo                      |" -ForegroundColor Green
+        Write-Host "  |  URL: http://${VM_IP}:${Puerto}                  |" -ForegroundColor Green
+        Write-Host "  |  Version: $version                               |" -ForegroundColor Green
+        Write-Host "  +==================================================+" -ForegroundColor Green
     } else {
-        Write-Host "  [!] Apache no respondió en el puerto $Puerto." -ForegroundColor Red
+        Write-Host "  [!] Apache no respondio en el puerto $Puerto." -ForegroundColor Red
         Write-Host "       Prueba manual: $destBase\bin\httpd.exe" -ForegroundColor Yellow
         Write-Host "       Log de errores: $destBase\logs\error.log" -ForegroundColor Yellow
     }
@@ -604,7 +604,7 @@ function _Apache_Win_SecurityHeaders {
 
     $content = Get-Content $ConfPath
 
-    # Activar mod_headers si está comentado
+    # Activar mod_headers si esta comentado
     $content = $content -replace '#LoadModule headers_module', 'LoadModule headers_module'
 
     # Agregar bloque de security headers si no existe
@@ -624,7 +624,7 @@ function _Apache_Win_SecurityHeaders {
 }
 
 # =============================================================================
-# FUNCIÓN: Instalar Nginx para Windows (desde ZIP preDescargado en C:\)
+# FUNCION: Instalar Nginx para Windows (desde ZIP preDescargado en C:\)
 # =============================================================================
 function Instalar-Nginx-Win {
     param([int]$Puerto)
@@ -641,25 +641,25 @@ function Instalar-Nginx-Win {
     }
 
     Write-Host ""
-    $sel = Read-Host "  Selecciona la versión (1-3)"
+    $sel = Read-Host "  Selecciona la version (1-3)"
 
     if ($sel -notmatch '^[1-3]$') {
-        Write-Host "  [!] Selección inválida. Usando versión 1 (Mainline)." -ForegroundColor Yellow
+        Write-Host "  [!] Seleccion invalida. Usando version 1 (Mainline)." -ForegroundColor Yellow
         $sel = "1"
     }
 
     $entrada  = $NGINX_VERSIONES | Where-Object { $_.num -eq $sel } | Select-Object -First 1
     $version  = $entrada.version
     $zipPath  = "${ZIP_BASE}nginx_${version}.zip"
-    $destBase = "C:\nginx_$version"    # Carpeta con versión en el nombre
+    $destBase = "C:\nginx_$version"    # Carpeta con version en el nombre
 
     Write-Host ""
-    Write-Host "  [*] Versión seleccionada: Nginx $version" -ForegroundColor White
+    Write-Host "  [*] Version seleccionada: Nginx $version" -ForegroundColor White
 
     # Verificar ZIP
     if (-not (Test-Path $zipPath)) {
-        Write-Host "  [!] ERROR: No se encontró $zipPath" -ForegroundColor Red
-        Write-Host "       Asegúrate de que el ZIP esté en C:\" -ForegroundColor Yellow
+        Write-Host "  [!] ERROR: No se encontro $zipPath" -ForegroundColor Red
+        Write-Host "       Asegurate de que el ZIP este en C:\" -ForegroundColor Yellow
         return
     }
 
@@ -686,7 +686,7 @@ function Instalar-Nginx-Win {
         return
     }
 
-    # Nginx se extrae generalmente como nginx-1.29.6\ → renombrar a nginx_1.29.6
+    # Nginx se extrae generalmente como nginx-1.29.6\ -> renombrar a nginx_1.29.6
     $posibles = @(
         "C:\nginx-$version",
         "C:\nginx_$version",
@@ -701,13 +701,13 @@ function Instalar-Nginx-Win {
     }
 
     if (-not (Test-Path $destBase)) {
-        Write-Host "  [!] ERROR: No se encontró el directorio $destBase tras extraer." -ForegroundColor Red
+        Write-Host "  [!] ERROR: No se encontro el directorio $destBase tras extraer." -ForegroundColor Red
         return
     }
 
     $conf = "$destBase\conf\nginx.conf"
     if (-not (Test-Path $conf)) {
-        Write-Host "  [!] ERROR: No se encontró nginx.conf en $conf" -ForegroundColor Red
+        Write-Host "  [!] ERROR: No se encontro nginx.conf en $conf" -ForegroundColor Red
         return
     }
 
@@ -730,7 +730,7 @@ function Instalar-Nginx-Win {
     # Agregar security headers en el bloque server
     _Nginx_Win_SecurityHeaders -ConfPath $conf -Puerto $Puerto
 
-    # Crear página de prueba en html/
+    # Crear pagina de prueba en html/
     $htmlDir = "$destBase\html"
     if (-not (Test-Path $htmlDir)) { New-Item -Path $htmlDir -ItemType Directory -Force | Out-Null }
     Crear-Index -Ruta $htmlDir -Servicio "Nginx (Windows)" -Version $version -Puerto $Puerto
@@ -749,13 +749,13 @@ function Instalar-Nginx-Win {
                 -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
     if ($conn.TcpTestSucceeded) {
         Write-Host ""
-        Write-Host "  ╔══════════════════════════════════════════════════╗" -ForegroundColor Green
-        Write-Host "  ║  [OK] Nginx Windows activo                       ║" -ForegroundColor Green
-        Write-Host "  ║  URL: http://${VM_IP}:${Puerto}                  ║" -ForegroundColor Green
-        Write-Host "  ║  Versión: $version                               ║" -ForegroundColor Green
-        Write-Host "  ╚══════════════════════════════════════════════════╝" -ForegroundColor Green
+        Write-Host "  +==================================================+" -ForegroundColor Green
+        Write-Host "  |  [OK] Nginx Windows activo                       |" -ForegroundColor Green
+        Write-Host "  |  URL: http://${VM_IP}:${Puerto}                  |" -ForegroundColor Green
+        Write-Host "  |  Version: $version                               |" -ForegroundColor Green
+        Write-Host "  +==================================================+" -ForegroundColor Green
     } else {
-        Write-Host "  [!] Nginx no respondió en el puerto $Puerto." -ForegroundColor Red
+        Write-Host "  [!] Nginx no respondio en el puerto $Puerto." -ForegroundColor Red
         Write-Host "       Log de errores: $destBase\logs\error.log" -ForegroundColor Yellow
     }
 }
@@ -779,7 +779,7 @@ function _Nginx_Win_SecurityHeaders {
         }
 "@
 
-    # Insertar después de "location / {"
+    # Insertar despues de "location / {"
     if ($content -notmatch "X-Frame-Options") {
         $content = $content -replace '(location\s*/\s*\{)', "`$1$headersBlock"
         $content | Set-Content $ConfPath -Encoding UTF8
@@ -788,7 +788,7 @@ function _Nginx_Win_SecurityHeaders {
 }
 
 # =============================================================================
-# FUNCIÓN: Limpiar entorno Windows
+# FUNCION: Limpiar entorno Windows
 # =============================================================================
 function Liberar-Entorno-Win {
     Write-Host ""
