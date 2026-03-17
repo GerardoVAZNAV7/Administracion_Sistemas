@@ -544,7 +544,9 @@ seleccionar_version() {
         # Indicar si hay versiones repetidas
         local nota=""
         [ "$total" -eq 1 ] && nota=" (unica disponible)"
-        printf "    %d) %-42s %s  <- %s%s\n" "$((i+1))" "$ver" "$dist" "$etq" "$nota"
+        local ver_num
+        ver_num=$(echo "$ver" | cut -d'-' -f1)
+        printf "    %d) v%-12s  %-38s %s\n" "$((i+1))" "$ver_num" "$ver" "$dist"
     done
     echo ""
 
@@ -558,7 +560,9 @@ seleccionar_version() {
 
         if [ "$seleccion" -ge 1 ] && [ "$seleccion" -le 3 ]; then
             VERSION_ELEGIDA="${opciones[$((seleccion - 1))]}"
-            echo "  [OK] Version seleccionada: $VERSION_ELEGIDA"
+            local _vnum
+            _vnum=$(echo "$VERSION_ELEGIDA" | cut -d'-' -f1)
+            echo "  [OK] Version seleccionada: $_vnum  (build: $VERSION_ELEGIDA)"
             break
         fi
         echo "  [!] Opcion invalida (1-3)." >&2
@@ -936,7 +940,6 @@ instalar_tomcat() {
     echo ""
     echo "[*] Instalando Tomcat version $version en puerto $puerto..."
 
-    # Verificar / instalar Java
     echo "  [*] Verificando Java..."
     if ! java -version &>/dev/null 2>&1; then
         echo "  [*] Java no encontrado. Instalando..."
@@ -949,7 +952,7 @@ instalar_tomcat() {
             fi
         done
         if [ $java_ok -eq 0 ]; then
-            echo "  [!] No se pudo instalar Java. Ejecutando con salida visible:"
+            echo "  [!] No se pudo instalar Java. Ejecutando visible:"
             dnf install -y java-17-openjdk
             return 1
         fi
@@ -957,10 +960,9 @@ instalar_tomcat() {
         echo "  [OK] Java detectado: $(java -version 2>&1 | head -1)"
     fi
 
-    # Instalar tomcat
     echo "  [*] Instalando paquete tomcat..."
     if ! dnf install -y -q tomcat &>/dev/null; then
-        echo "  [!] Fallo. Reintentando con salida visible:"
+        echo "  [!] Fallo. Reintentando visible:"
         dnf install -y tomcat
         return 1
     fi
@@ -971,97 +973,100 @@ instalar_tomcat() {
         return 1
     fi
 
-    # ── Restaurar server.xml a puerto 8080 por si tenia un valor previo ───────
-    # En Fedora 43 el Connector puede estar en formato normal O con executor
-    # Formato normal:    <Connector port="8080" protocol="HTTP/1.1"
-    # Formato executor:  <Connector executor="tomcatThreadPool"
-    #                               port="8080" server="Apache" protocol="HTTP/1.1"
-    # El script primero normaliza a 8080, luego cambia a puerto elegido
-    echo "  [*] Normalizando server.xml a puerto 8080..."
-    # Reemplazar cualquier numero de puerto que este en atributo port= dentro
-    # de lineas que contengan protocol="HTTP/1.1" (el conector HTTP)
-    # Usando python para manejar el formato multi-linea correctamente
-    python3 - "$puerto" /etc/tomcat/server.xml << 'PYEOF'
-import sys, re
+    # ── Configurar puerto en server.xml con sed puro ──────────────────────────
+    # El server.xml de Fedora 43 tiene DOS Connectors HTTP/1.1:
+    #   Tipo A (1 linea):   <Connector port="8080" protocol="HTTP/1.1" .../>
+    #   Tipo B (multilínea):<Connector executor="tomcatThreadPool"
+    #                                   port="8080" ... protocol="HTTP/1.1"/>
+    # Estrategia:
+    #   1. Hacer backup del original si no existe ya
+    #   2. Restaurar desde backup (limpia cualquier ejecucion previa)
+    #   3. Usar awk para cambiar SOLO la primera ocurrencia de port= que este
+    #      dentro de un bloque Connector con HTTP/1.1, sin tocar AJP ni shutdown
+    echo "  [*] Configurando puerto $puerto en server.xml..."
 
-puerto_nuevo = sys.argv[1]
-path = sys.argv[2]
+    local xml="/etc/tomcat/server.xml"
+    local bak="/etc/tomcat/server.xml.original"
 
-with open(path, 'r') as f:
-    xml = f.read()
+    # Guardar backup del original una sola vez
+    if [ ! -f "$bak" ]; then
+        cp "$xml" "$bak"
+        echo "  [OK] Backup guardado en $bak"
+    fi
 
-# Estrategia: dentro del bloque Connector que tiene HTTP/1.1,
-# reemplazar el atributo port="CUALQUIER_NUMERO" por port="PUERTO_NUEVO"
-# El bloque puede ser de una linea o multiples lineas
+    # Restaurar siempre desde el original para limpiar cambios previos
+    cp "$bak" "$xml"
 
-# Patron: desde <Connector hasta /> pasando por HTTP/1.1
-def reemplazar_connector_http(xml, nuevo_puerto):
-    # Encontrar todos los bloques Connector
-    resultado = []
-    pos = 0
-    while True:
-        inicio = xml.find('<Connector', pos)
-        if inicio == -1:
-            resultado.append(xml[pos:])
-            break
-        fin = xml.find('/>', inicio)
-        if fin == -1:
-            resultado.append(xml[pos:])
-            break
-        bloque = xml[inicio:fin+2]
-        # Solo modificar si es el conector HTTP/1.1 (no AJP, no shutdown)
-        if 'HTTP/1.1' in bloque:
-            # Reemplazar el atributo port="cualquier_cosa"
-            bloque_nuevo = re.sub(r'port="[^"]*"', f'port="{nuevo_puerto}"', bloque)
-            # Asegurarse que tenga server="Apache" para ocultar version
-            if 'server=' not in bloque_nuevo:
-                bloque_nuevo = bloque_nuevo.replace('protocol="HTTP/1.1"',
-                    'server="Apache" protocol="HTTP/1.1"')
-            resultado.append(xml[pos:inicio])
-            resultado.append(bloque_nuevo)
-        else:
-            resultado.append(xml[pos:fin+2])
-        pos = fin + 2
+    # Usar awk: leer el archivo, acumular bloques Connector,
+    # y al cerrar (/>) modificar SOLO el primer Connector HTTP/1.1
+    awk -v puerto="$puerto" '
+    BEGIN { en_connector=0; bloque=""; primer_http=0 }
 
-    return ''.join(resultado)
+    # Detectar inicio de bloque Connector
+    /<Connector/ {
+        en_connector=1
+        bloque=$0
+        # Si abre y cierra en la misma linea, procesarlo de inmediato
+        if ($0 ~ />/) {
+            if (bloque ~ /HTTP\/1\.1/ && bloque !~ /8443/ && primer_http==0) {
+                # Cambiar port= a puerto elegido y agregar server=Apache
+                gsub(/port="[^"]*"/, "port=\"" puerto "\"", bloque)
+                if (bloque !~ /server=/) {
+                    gsub(/protocol="HTTP\/1\.1"/, "server=\"Apache\" protocol=\"HTTP/1.1\"", bloque)
+                }
+                primer_http=1
+            }
+            print bloque
+            en_connector=0
+            bloque=""
+        }
+        next
+    }
 
-xml_nuevo = reemplazar_connector_http(xml, puerto_nuevo)
+    # Seguir acumulando lineas del bloque
+    en_connector==1 {
+        bloque=bloque "\n" $0
+        # Detectar cierre del bloque
+        if ($0 ~ />/) {
+            if (bloque ~ /HTTP\/1\.1/ && bloque !~ /8443/ && primer_http==0) {
+                gsub(/port="[^"]*"/, "port=\"" puerto "\"", bloque)
+                if (bloque !~ /server=/) {
+                    gsub(/protocol="HTTP\/1\.1"/, "server=\"Apache\" protocol=\"HTTP/1.1\"", bloque)
+                }
+                primer_http=1
+            }
+            print bloque
+            en_connector=0
+            bloque=""
+        }
+        next
+    }
 
-with open(path, 'w') as f:
-    f.write(xml_nuevo)
+    # Imprimir lineas normales
+    { print }
+    ' "$bak" > "${xml}.tmp" && mv "${xml}.tmp" "$xml"
 
-# Verificar
-import re as re2
-if f'port="{puerto_nuevo}"' in xml_nuevo:
-    print(f"  [OK] Puerto {puerto_nuevo} configurado correctamente en server.xml.")
-else:
-    print(f"  [!] No se encontro el Connector HTTP/1.1 en server.xml.")
-    # Mostrar los Connectors para diagnostico
-    for i, line in enumerate(xml_nuevo.split('\n'), 1):
-        if 'Connector' in line or 'port=' in line:
-            print(f"  {i}: {line}")
-    sys.exit(1)
-PYEOF
-
-    local py_exit=$?
-    if [ $py_exit -ne 0 ]; then
-        echo "  [!] Fallo al configurar server.xml. Abortando."
+    # Verificar que el cambio se aplico
+    if grep -q "port=\"${puerto}\"" "$xml"; then
+        echo "  [OK] Puerto $puerto configurado en server.xml."
+    else
+        echo "  [!] No se pudo configurar el puerto. Mostrando Connectors:"
+        grep -n "Connector\|port=" "$xml" | head -15
         return 1
     fi
 
-    # ── Crear usuario dedicado y directorio web ───────────────────────────────
+    # ── Crear usuario y directorio web ────────────────────────────────────────
     crear_usuario_dedicado "tomcat" "/var/lib/tomcat"
 
     local webapp_dir="/var/lib/tomcat/webapps/ROOT"
     mkdir -p "$webapp_dir"
     crear_index "$webapp_dir" "Apache Tomcat" "$version" "$puerto"
 
-    # Permisos seguros
     chown -R tomcat:tomcat /var/lib/tomcat/webapps
     chmod -R 750 /var/lib/tomcat/webapps
     chcon -R -t tomcat_var_lib_t /var/lib/tomcat/webapps 2>/dev/null
 
-    # ── SELinux: registrar puerto para Tomcat ─────────────────────────────────
+    # ── SELinux ───────────────────────────────────────────────────────────────
     echo "  [*] Registrando puerto $puerto en SELinux..."
     semanage port -a -t http_port_t   -p tcp "$puerto" 2>/dev/null \
         || semanage port -m -t http_port_t   -p tcp "$puerto" 2>/dev/null
@@ -1080,7 +1085,8 @@ PYEOF
     local intentos=0
     while [ $intentos -lt 30 ]; do
         sleep 1
-        if ss -tuln 2>/dev/null | grep -q ":${puerto}"; then
+        # awk extrae la columna de direccion local y busca :PUERTO al final
+        if ss -tuln 2>/dev/null | awk '{print $5}' | grep -qE ":${puerto}$"; then
             echo "  [OK] Puerto $puerto detectado (${intentos}s)."
             break
         fi
@@ -1088,27 +1094,44 @@ PYEOF
     done
 
     sleep 1
-    if systemctl is-active --quiet tomcat && ss -tuln 2>/dev/null | grep -q ":${puerto}"; then
+    local puerto_ok=false
+    ss -tuln 2>/dev/null | awk '{print $5}' | grep -qE ":${puerto}$" && puerto_ok=true
+
+    if systemctl is-active --quiet tomcat && $puerto_ok; then
         echo ""
-        echo "  ╔══════════════════════════════════════════════════╗"
-        echo "  ║  [OK] Tomcat activo y escuchando                 ║"
-        echo "  ║  URL: http://$VM_IP:$puerto                      "
-        echo "  ║  Version: $version                               "
-        echo "  ╚══════════════════════════════════════════════════╝"
+        echo "  +==================================================+"
+        echo "  |  [OK] Tomcat activo y escuchando                 |"
+        echo "  |  URL: http://$VM_IP:$puerto                      |"
+        echo "  |  Version: $version                               |"
+        echo "  +==================================================+"
         echo ""
         echo "  [*] Interfaces en escucha para puerto $puerto:"
-        ss -tuln | grep ":${puerto}"
+        ss -tuln | awk '{print $5}' | grep -E ":${puerto}$"
     else
-        echo ""
-        echo "  [!] Tomcat no escucha en puerto $puerto tras 30s."
-        echo "  --- Estado del servicio ---"
-        systemctl status tomcat --no-pager -n 5
-        echo "  --- Log de Tomcat ---"
-        journalctl -u tomcat -n 20 --no-pager
-        echo "  --- Puertos en escucha ---"
-        ss -tuln | grep LISTEN | head -15
-        echo "  --- server.xml (Connectors) ---"
-        grep -n "Connector\|port=" /etc/tomcat/server.xml | head -15
-        return 1
+        # Fallback: curl directo por si ss no detecta bien
+        sleep 2
+        local http_code
+        http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+            "http://127.0.0.1:${puerto}" --connect-timeout 4 2>/dev/null)
+        if echo "$http_code" | grep -qE "^[23]"; then
+            echo ""
+            echo "  +==================================================+"
+            echo "  |  [OK] Tomcat responde HTTP ($http_code)          |"
+            echo "  |  URL: http://$VM_IP:$puerto                      |"
+            echo "  |  Version: $version                               |"
+            echo "  +==================================================+"
+        else
+            echo ""
+            echo "  [!] Tomcat no responde en puerto $puerto."
+            echo "  --- Estado del servicio ---"
+            systemctl status tomcat --no-pager -n 5
+            echo "  --- Log de Tomcat ---"
+            journalctl -u tomcat -n 20 --no-pager
+            echo "  --- Puertos en escucha ---"
+            ss -tuln | head -20
+            echo "  --- server.xml (Connectors) ---"
+            grep -n "Connector\|port=" /etc/tomcat/server.xml | head -15
+            return 1
+        fi
     fi
 }
