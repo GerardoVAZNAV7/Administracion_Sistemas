@@ -993,15 +993,14 @@ instalar_tomcat() {
     # Restaurar siempre desde el original (limpia ejecuciones previas)
     cp "$bak" "$xml"
 
-    # sed cambia port="8080" en todas las lineas donde aparece
-    # 8080 es exclusivo de los Connectors HTTP (no aparece en shutdown 8005 ni SSL 8443)
-    sed -i 's/port="8080"/port="${puerto}"/g' "$xml"
+    # IMPORTANTE: comillas dobles para que $puerto se expanda (simples NO expanden variables)
+    sed -i "s/port=\"8080\"/port=\"${puerto}\"/g" "$xml"
 
-    # Agregar server="Apache" en lineas con protocol="HTTP/1.1" para ocultar version
-    sed -i '/protocol="HTTP\/1\.1"/ { /server=/ !s/protocol="HTTP\/1\.1"/server="Apache" protocol="HTTP\/1\.1"/ }' "$xml"
+    # Agregar server="Apache" para ocultar version en encabezados HTTP
+    sed -i "/protocol=\"HTTP\/1\.1\"/ { /server=/ !s/protocol=\"HTTP\/1\.1\"/server=\"Apache\" protocol=\"HTTP\/1\.1\"/ }" "$xml"
 
-    # Verificar que el cambio se aplico
-    if grep -q 'port="${puerto}"' "$xml"; then
+    # Verificar con el numero real del puerto (no la variable literal)
+    if grep -q "port=\"${puerto}\"" "$xml"; then
         echo "  [OK] Puerto $puerto configurado en server.xml."
         grep -n "port=" "$xml" | grep -v "8005\|8443\|8009"
     else
