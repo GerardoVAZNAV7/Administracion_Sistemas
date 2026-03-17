@@ -486,51 +486,64 @@ seleccionar_version() {
 
     echo "  [*] Consultando repositorio para $paquete_dnf..."
 
-    mapfile -t versiones_crudas < <(
+    mapfile -t todas < <(
         dnf repoquery --available --queryformat '%{version}-%{release}' "$paquete_dnf" \
-            2>/dev/null | sort -Vu | tail -n 5
+            2>/dev/null | sort -Vu
     )
 
-    if [ ${#versiones_crudas[@]} -eq 0 ]; then
+    if [ ${#todas[@]} -eq 0 ]; then
         echo "  [!] No se encontraron versiones en el repositorio. Usando 'latest'."
         VERSION_ELEGIDA="latest"
         return
     fi
 
+    local total=${#todas[@]}
+    local v_latest="${todas[$((total - 1))]}"
+    local v_stable v_legacy
+
+    if [ $total -ge 3 ]; then
+        v_stable="${todas[$((total - 2))]}"
+        v_legacy="${todas[0]}"
+    elif [ $total -eq 2 ]; then
+        v_stable="${todas[0]}"
+        v_legacy="${todas[0]}"
+    else
+        v_stable="$v_latest"
+        v_legacy="$v_latest"
+    fi
+
+    local opciones=("$v_latest" "$v_stable" "$v_legacy")
+    local etiquetas=("Latest" "Stable" "LTS/Legacy")
+
     echo ""
     echo "  Versiones disponibles para $paquete_dnf:"
-    local i=1
-    for ver in "${versiones_crudas[@]}"; do
-        local etiqueta=""
-        if   [[ "$ver" == *"fc42"* ]]; then etiqueta="[Fedora 42 — Actual]"
-        elif [[ "$ver" == *"fc41"* ]]; then etiqueta="[Fedora 41 — Legado]"
-        else                                etiqueta="[Repositorio]"
+    for i in 0 1 2; do
+        local ver="${opciones[$i]}"
+        local etq="${etiquetas[$i]}"
+        local dist=""
+        if   [[ "$ver" == *"fc43"* ]]; then dist="[Fedora 43]"
+        elif [[ "$ver" == *"fc42"* ]]; then dist="[Fedora 42]"
+        elif [[ "$ver" == *"fc41"* ]]; then dist="[Fedora 41]"
+        else                                dist="[Repositorio]"
         fi
-        # Marcar la última como "Latest" y la primera como "LTS/Estable"
-        if [ "$i" -eq "${#versiones_crudas[@]}" ]; then
-            etiqueta="$etiqueta ← Latest"
-        elif [ "$i" -eq 1 ]; then
-            etiqueta="$etiqueta ← LTS/Estable"
-        fi
-        echo "    $i) $ver  $etiqueta"
-        ((i++))
+        printf "    %d) %-40s %s  <- %s\n" "$((i+1))" "$ver" "$dist" "$etq"
     done
     echo ""
 
     while true; do
-        read -p "  Selecciona el número de versión (1-${#versiones_crudas[@]}): " seleccion
+        read -p "  Selecciona la version (1-3): " seleccion
 
         if [[ ! "$seleccion" =~ ^[0-9]+$ ]]; then
-            echo "  [!] Ingresa solo el número." >&2
+            echo "  [!] Ingresa solo el numero." >&2
             continue
         fi
 
-        if [ "$seleccion" -ge 1 ] && [ "$seleccion" -le "${#versiones_crudas[@]}" ]; then
-            VERSION_ELEGIDA="${versiones_crudas[$((seleccion - 1))]}"
-            echo "  [OK] Versión seleccionada: $VERSION_ELEGIDA"
+        if [ "$seleccion" -ge 1 ] && [ "$seleccion" -le 3 ]; then
+            VERSION_ELEGIDA="${opciones[$((seleccion - 1))]}"
+            echo "  [OK] Version seleccionada: $VERSION_ELEGIDA"
             break
         fi
-        echo "  [!] Opción inválida (1-${#versiones_crudas[@]})." >&2
+        echo "  [!] Opcion invalida (1-3)." >&2
     done
 }
 
@@ -905,53 +918,67 @@ instalar_tomcat() {
     echo ""
     echo "[*] Instalando Tomcat version $version en puerto $puerto..."
 
-    # Fedora 42/43 puede tener el paquete de Java con nombre distinto
-    # Intentar instalar Java primero, probar varios nombres de paquete
+    # Verificar / instalar Java (probar varios nombres de paquete para Fedora 42/43)
     echo "  [*] Verificando Java..."
     if ! java -version &>/dev/null 2>&1; then
         echo "  [*] Java no encontrado. Instalando..."
-        local java_instalado=0
-        for pkg in java-17-openjdk java-21-openjdk java-11-openjdk java-latest-openjdk; do
+        local java_ok=0
+        for pkg in java-17-openjdk java-21-openjdk java-11-openjdk; do
             if dnf install -y -q "$pkg" &>/dev/null; then
-                echo "  [OK] Java instalado con paquete: $pkg"
-                java_instalado=1
+                echo "  [OK] Java instalado: $pkg"
+                java_ok=1
                 break
             fi
         done
-        if [ $java_instalado -eq 0 ]; then
-            echo "  [!] No se pudo instalar Java. Intentando con 'java-17-openjdk' mostrando errores:"
+        if [ $java_ok -eq 0 ]; then
+            echo "  [!] No se pudo instalar Java automaticamente. Ejecutando con salida visible:"
             dnf install -y java-17-openjdk
-            echo "  [!] Instala Java manualmente y vuelve a ejecutar."
             return 1
         fi
     else
-        echo "  [OK] Java ya esta instalado: $(java -version 2>&1 | head -1)"
+        echo "  [OK] Java detectado: $(java -version 2>&1 | head -1)"
     fi
 
-    # Instalar tomcat
-    echo "  [*] Instalando tomcat..."
+    # Instalar tomcat mostrando errores si falla
+    echo "  [*] Instalando paquete tomcat..."
     if ! dnf install -y -q tomcat &>/dev/null; then
-        echo "  [!] Error al instalar tomcat. Mostrando detalle:"
+        echo "  [!] Fallo silencioso. Reintentando con salida visible:"
         dnf install -y tomcat
         return 1
     fi
+    echo "  [OK] Tomcat instalado."
 
     if [ ! -d "/etc/tomcat" ]; then
-        echo "  [!] Error: directorio /etc/tomcat no existe tras la instalación."
+        echo "  [!] /etc/tomcat no existe tras la instalacion. Abortando."
         return 1
     fi
 
-    # Cambiar puerto en server.xml (de 8080 al elegido)
-    # También ocultar el banner de versión (Server header)
-    sed -i \
-        -e "s/port=\"8080\"/port=\"$puerto\"/" \
-        -e "s/<Connector/<Connector server=\"Apache\" /" \
-        /etc/tomcat/server.xml 2>/dev/null
+    # ── Configurar puerto en server.xml ──────────────────────────────────────
+    # IMPORTANTE: el sed debe cambiar SOLO el Connector HTTP (port="8080")
+    # sin tocar el puerto del Server (port="8005") ni el AJP (port="8009")
+    # Por eso se filtra explicitamente la linea del Connector HTTP/1.1
+    echo "  [*] Configurando puerto $puerto en server.xml..."
+    sed -i "s|port=\"8080\"|port=\"$puerto\"|g" /etc/tomcat/server.xml
 
-    # Crear usuario dedicado si no existe
+    # Ocultar banner de version en el encabezado Server:
+    # Agregar 'server="Apache"' al Connector si no esta ya
+    if ! grep -q 'server="Apache"' /etc/tomcat/server.xml; then
+        sed -i "s|port=\"$puerto\"|port=\"$puerto\" server=\"Apache\"|g" \
+            /etc/tomcat/server.xml
+    fi
+
+    # Verificar que el cambio se aplico
+    if grep -q "port=\"$puerto\"" /etc/tomcat/server.xml; then
+        echo "  [OK] Puerto $puerto configurado en server.xml."
+    else
+        echo "  [!] No se pudo configurar el puerto en server.xml. Revisa manualmente:"
+        grep -n "Connector\|port=" /etc/tomcat/server.xml | head -10
+        return 1
+    fi
+
+    # ── Crear usuario dedicado y directorio web ───────────────────────────────
     crear_usuario_dedicado "tomcat" "/var/lib/tomcat"
 
-    # Directorio webapps
     local webapp_dir="/var/lib/tomcat/webapps/ROOT"
     mkdir -p "$webapp_dir"
     crear_index "$webapp_dir" "Apache Tomcat" "$version" "$puerto"
@@ -961,34 +988,60 @@ instalar_tomcat() {
     chmod -R 750 /var/lib/tomcat/webapps
     chcon -R -t tomcat_var_lib_t /var/lib/tomcat/webapps 2>/dev/null
 
-    # SELinux y firewall
-    registrar_puerto_selinux "$puerto"
+    # ── SELinux: registrar el puerto con el tipo correcto para Tomcat ─────────
+    echo "  [*] Registrando puerto $puerto en SELinux (http_port_t + tomcat_port_t)..."
+    # Tomcat necesita http_port_t O tomcat_port_t segun la version de politica
+    semanage port -a -t http_port_t    -p tcp "$puerto" 2>/dev/null \
+        || semanage port -m -t http_port_t    -p tcp "$puerto" 2>/dev/null
+    semanage port -a -t tomcat_port_t  -p tcp "$puerto" 2>/dev/null \
+        || semanage port -m -t tomcat_port_t  -p tcp "$puerto" 2>/dev/null
+    echo "  [OK] Puerto $puerto registrado en SELinux."
+
+    # ── Firewall ──────────────────────────────────────────────────────────────
     configurar_firewall "$puerto"
 
+    # ── Iniciar Tomcat ────────────────────────────────────────────────────────
     systemctl enable tomcat --now &>/dev/null
     systemctl restart tomcat
 
-    # Tomcat tarda en arrancar, esperar hasta 20s
-    echo "  [*] Esperando a que Tomcat inicie (hasta 20s)..."
+    # Esperar hasta 30s a que el puerto aparezca (Tomcat arranca lento)
+    echo "  [*] Esperando que Tomcat escuche en puerto $puerto (hasta 30s)..."
     local intentos=0
-    while [ $intentos -lt 20 ]; do
+    while [ $intentos -lt 30 ]; do
         sleep 1
-        if ss -tuln 2>/dev/null | grep -q ":${puerto} "; then
+        if ss -tuln 2>/dev/null | grep -q ":${puerto}"; then
+            echo "  [OK] Puerto $puerto detectado en ss (${intentos}s)."
             break
         fi
         ((intentos++))
     done
 
-    if systemctl is-active --quiet tomcat; then
+    # Verificar estado final
+    sleep 1
+    if systemctl is-active --quiet tomcat && ss -tuln 2>/dev/null | grep -q ":${puerto}"; then
         echo ""
         echo "  ╔══════════════════════════════════════════════════╗"
-        echo "  ║  [OK] Tomcat activo                              ║"
+        echo "  ║  [OK] Tomcat activo y escuchando                 ║"
         echo "  ║  URL: http://$VM_IP:$puerto                      "
-        echo "  ║  Versión: $version                               "
+        echo "  ║  Version: $version                               "
         echo "  ╚══════════════════════════════════════════════════╝"
+        echo ""
+        echo "  [*] Interfaces en escucha para puerto $puerto:"
+        ss -tuln | grep ":${puerto}"
     else
-        echo "  [!] Tomcat no inició. Diagnóstico:"
-        journalctl -u tomcat -n 15 --no-pager
+        echo ""
+        echo "  [!] Tomcat no escucha en el puerto $puerto tras 30s."
+        echo "  --- Estado del servicio ---"
+        systemctl status tomcat --no-pager -n 5
+        echo ""
+        echo "  --- Ultimas lineas del log de Tomcat ---"
+        journalctl -u tomcat -n 20 --no-pager
+        echo ""
+        echo "  --- Puertos actualmente en escucha ---"
+        ss -tuln | grep -E "LISTEN" | head -10
+        echo ""
+        echo "  --- Verificar server.xml ---"
+        grep -n "Connector\|port=" /etc/tomcat/server.xml | head -10
         return 1
     fi
 }
