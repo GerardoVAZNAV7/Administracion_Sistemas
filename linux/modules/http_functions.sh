@@ -973,84 +973,39 @@ instalar_tomcat() {
         return 1
     fi
 
-    # ── Configurar puerto en server.xml con sed puro ──────────────────────────
-    # El server.xml de Fedora 43 tiene DOS Connectors HTTP/1.1:
-    #   Tipo A (1 linea):   <Connector port="8080" protocol="HTTP/1.1" .../>
-    #   Tipo B (multilínea):<Connector executor="tomcatThreadPool"
-    #                                   port="8080" ... protocol="HTTP/1.1"/>
-    # Estrategia:
-    #   1. Hacer backup del original si no existe ya
-    #   2. Restaurar desde backup (limpia cualquier ejecucion previa)
-    #   3. Usar awk para cambiar SOLO la primera ocurrencia de port= que este
-    #      dentro de un bloque Connector con HTTP/1.1, sin tocar AJP ni shutdown
+    # ── Configurar puerto en server.xml ──────────────────────────────────────
+    # Fedora 43 server.xml tiene port= en estos sitios:
+    #   port="8005"  -> shutdown del Server  -> NO tocar
+    #   port="8080"  -> Connector HTTP/1.1   -> CAMBIAR (puede aparecer 2 veces)
+    #   port="8443"  -> Connector SSL        -> NO tocar
+    # El valor 8080 es exclusivo del Connector HTTP, asi que sed es seguro.
     echo "  [*] Configurando puerto $puerto en server.xml..."
 
     local xml="/etc/tomcat/server.xml"
     local bak="/etc/tomcat/server.xml.original"
 
-    # Guardar backup del original una sola vez
+    # Backup del original (solo la primera vez)
     if [ ! -f "$bak" ]; then
         cp "$xml" "$bak"
         echo "  [OK] Backup guardado en $bak"
     fi
 
-    # Restaurar siempre desde el original para limpiar cambios previos
+    # Restaurar siempre desde el original (limpia ejecuciones previas)
     cp "$bak" "$xml"
 
-    # Usar awk: leer el archivo, acumular bloques Connector,
-    # y al cerrar (/>) modificar SOLO el primer Connector HTTP/1.1
-    awk -v puerto="$puerto" '
-    BEGIN { en_connector=0; bloque=""; primer_http=0 }
+    # sed cambia port="8080" en todas las lineas donde aparece
+    # 8080 es exclusivo de los Connectors HTTP (no aparece en shutdown 8005 ni SSL 8443)
+    sed -i 's/port="8080"/port="${puerto}"/g' "$xml"
 
-    # Detectar inicio de bloque Connector
-    /<Connector/ {
-        en_connector=1
-        bloque=$0
-        # Si abre y cierra en la misma linea, procesarlo de inmediato
-        if ($0 ~ />/) {
-            if (bloque ~ /HTTP\/1\.1/ && bloque !~ /8443/ && primer_http==0) {
-                # Cambiar port= a puerto elegido y agregar server=Apache
-                gsub(/port="[^"]*"/, "port=\"" puerto "\"", bloque)
-                if (bloque !~ /server=/) {
-                    gsub(/protocol="HTTP\/1\.1"/, "server=\"Apache\" protocol=\"HTTP/1.1\"", bloque)
-                }
-                primer_http=1
-            }
-            print bloque
-            en_connector=0
-            bloque=""
-        }
-        next
-    }
-
-    # Seguir acumulando lineas del bloque
-    en_connector==1 {
-        bloque=bloque "\n" $0
-        # Detectar cierre del bloque
-        if ($0 ~ />/) {
-            if (bloque ~ /HTTP\/1\.1/ && bloque !~ /8443/ && primer_http==0) {
-                gsub(/port="[^"]*"/, "port=\"" puerto "\"", bloque)
-                if (bloque !~ /server=/) {
-                    gsub(/protocol="HTTP\/1\.1"/, "server=\"Apache\" protocol=\"HTTP/1.1\"", bloque)
-                }
-                primer_http=1
-            }
-            print bloque
-            en_connector=0
-            bloque=""
-        }
-        next
-    }
-
-    # Imprimir lineas normales
-    { print }
-    ' "$bak" > "${xml}.tmp" && mv "${xml}.tmp" "$xml"
+    # Agregar server="Apache" en lineas con protocol="HTTP/1.1" para ocultar version
+    sed -i '/protocol="HTTP\/1\.1"/ { /server=/ !s/protocol="HTTP\/1\.1"/server="Apache" protocol="HTTP\/1\.1"/ }' "$xml"
 
     # Verificar que el cambio se aplico
-    if grep -q "port=\"${puerto}\"" "$xml"; then
+    if grep -q 'port="${puerto}"' "$xml"; then
         echo "  [OK] Puerto $puerto configurado en server.xml."
+        grep -n "port=" "$xml" | grep -v "8005\|8443\|8009"
     else
-        echo "  [!] No se pudo configurar el puerto. Mostrando Connectors:"
+        echo "  [!] No se pudo configurar el puerto. Estado del server.xml:"
         grep -n "Connector\|port=" "$xml" | head -15
         return 1
     fi
