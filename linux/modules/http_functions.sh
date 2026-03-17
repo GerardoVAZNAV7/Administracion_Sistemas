@@ -638,39 +638,48 @@ instalar_apache() {
             /etc/httpd/conf/httpd.conf 2>/dev/null
     fi
 
+    # Asegurar que mod_headers y mod_authz_core esten activos en httpd.conf
+    sed -i 's/^#LoadModule headers_module/LoadModule headers_module/' \
+        /etc/httpd/conf/httpd.conf 2>/dev/null
+    sed -i 's/^#LoadModule authz_core_module/LoadModule authz_core_module/' \
+        /etc/httpd/conf/httpd.conf 2>/dev/null
+
     # Crear VirtualHost para este puerto
+    # IMPORTANTE: <LimitExcept> va DENTRO de <Directory>, nunca directamente en <VirtualHost>
+    # En Fedora/RHEL httpd rechaza <LimitExcept> fuera de <Directory> con AH00526
     cat > /etc/httpd/conf.d/vhost_${puerto}.conf << EOF
-# VirtualHost Apache — Puerto $puerto
+# VirtualHost Apache - Puerto $puerto
 Listen $puerto
 
 <VirtualHost *:$puerto>
     ServerAdmin webmaster@localhost
-    DocumentRoot $vhost_dir
+    DocumentRoot ${vhost_dir}
     ErrorLog  /var/log/httpd/error_${puerto}.log
     CustomLog /var/log/httpd/access_${puerto}.log combined
 
-    <Directory "$vhost_dir">
+    <Directory "${vhost_dir}">
         Options -Indexes -FollowSymLinks
         AllowOverride None
         Require all granted
+        # Bloquear metodos peligrosos dentro de Directory (requerido por Fedora httpd)
+        <LimitExcept GET POST HEAD>
+            Require all denied
+        </LimitExcept>
     </Directory>
 
-    # Seguridad: deshabilitar métodos peligrosos
-    <LimitExcept GET POST HEAD>
-        Require all denied
-    </LimitExcept>
-
-    # Headers de seguridad
-    Header always set X-Frame-Options "SAMEORIGIN"
-    Header always set X-Content-Type-Options "nosniff"
-    Header always set X-XSS-Protection "1; mode=block"
+    # Headers de seguridad (requiere mod_headers)
+    <IfModule mod_headers.c>
+        Header always set X-Frame-Options "SAMEORIGIN"
+        Header always set X-Content-Type-Options "nosniff"
+        Header always set X-XSS-Protection "1; mode=block"
+    </IfModule>
 </VirtualHost>
 EOF
 
-    # Hardening: ocultar versión del servidor
+    # Hardening: ocultar version del servidor
     _apache_hardening_headers
 
-    # Crear página de prueba
+    # Crear pagina de prueba
     crear_index "$vhost_dir" "Apache/httpd" "$version" "$puerto"
 
     # Permisos seguros
@@ -682,10 +691,14 @@ EOF
     registrar_puerto_selinux "$puerto"
     configurar_firewall "$puerto"
 
-    # Habilitar módulo headers si no está activo
-    grep -q "mod_headers" /etc/httpd/conf/httpd.conf 2>/dev/null || \
-        sed -i 's/#LoadModule headers_module/LoadModule headers_module/' \
-            /etc/httpd/conf/httpd.conf 2>/dev/null
+    # Validar configuracion antes de iniciar (evita arranque fallido silencioso)
+    echo "  [*] Validando configuracion de Apache..."
+    if ! httpd -t &>/dev/null; then
+        echo "  [!] Error en la configuracion de Apache:"
+        httpd -t
+        return 1
+    fi
+    echo "  [OK] Configuracion valida."
 
     # Iniciar / recargar servicio
     systemctl enable httpd --now &>/dev/null
@@ -701,10 +714,10 @@ EOF
         echo "  ╔══════════════════════════════════════════════════╗"
         echo "  ║  [OK] Apache activo                              ║"
         echo "  ║  URL: http://$VM_IP:$puerto                      "
-        echo "  ║  Versión: $version                               "
+        echo "  ║  Version: $version                               "
         echo "  ╚══════════════════════════════════════════════════╝"
     else
-        echo "  [!] Apache no inició. Diagnóstico:"
+        echo "  [!] Apache no inicio. Diagnostico:"
         journalctl -u httpd -n 15 --no-pager
         return 1
     fi
@@ -797,16 +810,18 @@ http {
 }
 NGINXMAIN
 
-    # Crear vhost específico para este puerto
+    # Crear vhost especifico para este puerto
+    # listen 0.0.0.0:PUERTO garantiza escucha en TODAS las interfaces (host-only incluida)
     cat > /etc/nginx/conf.d/vhost_${puerto}.conf << EOF
 server {
-    listen $puerto;
+    listen 0.0.0.0:${puerto};
+    listen [::]:${puerto};
     server_name _;
-    root $vhost_dir;
+    root ${vhost_dir};
     index index.html;
 
-    # Deshabilitar métodos peligrosos
-    if (\$request_method !~ ^(GET|POST|HEAD)$) {
+    # Deshabilitar metodos peligrosos
+    if (\$request_method !~ ^(GET|POST|HEAD)\$) {
         return 405;
     }
 
@@ -821,7 +836,7 @@ server {
 }
 EOF
 
-    # Crear página de prueba
+    # Crear pagina de prueba
     crear_index "$vhost_dir" "Nginx" "$version" "$puerto"
 
     # Permisos seguros
@@ -829,12 +844,14 @@ EOF
     chmod -R 750 "$vhost_dir"
     chcon -R -t httpd_sys_content_t "$vhost_dir" 2>/dev/null
 
-    # Validar configuración antes de iniciar
-    if ! nginx -t &>/dev/null; then
-        echo "  [!] Error en configuración de Nginx:"
+    # Validar configuracion antes de iniciar
+    echo "  [*] Validando configuracion de Nginx..."
+    if ! nginx -t 2>/dev/null; then
+        echo "  [!] Error en configuracion de Nginx:"
         nginx -t
         return 1
     fi
+    echo "  [OK] Configuracion valida."
 
     # SELinux y firewall
     registrar_puerto_selinux "$puerto"
@@ -848,17 +865,31 @@ EOF
         systemctl start nginx
     fi
 
-    sleep 1
-    if systemctl is-active --quiet nginx; then
+    # Esperar hasta 8s a que el puerto aparezca en ss
+    local intentos=0
+    while [ $intentos -lt 8 ]; do
+        sleep 1
+        if ss -tuln 2>/dev/null | grep -q ":${puerto}"; then
+            break
+        fi
+        ((intentos++))
+    done
+
+    if systemctl is-active --quiet nginx && ss -tuln 2>/dev/null | grep -q ":${puerto}"; then
         echo ""
         echo "  ╔══════════════════════════════════════════════════╗"
-        echo "  ║  [OK] Nginx activo                               ║"
+        echo "  ║  [OK] Nginx activo y escuchando                  ║"
         echo "  ║  URL: http://$VM_IP:$puerto                      "
-        echo "  ║  Versión: $version                               "
+        echo "  ║  Version: $version                               "
         echo "  ╚══════════════════════════════════════════════════╝"
+        echo ""
+        echo "  [*] Interfaces en escucha para puerto $puerto:"
+        ss -tuln | grep ":${puerto}"
     else
-        echo "  [!] Nginx no inició. Diagnóstico:"
+        echo "  [!] Nginx no inicio correctamente. Diagnostico:"
         journalctl -u nginx -n 15 --no-pager
+        echo "  Ultimas lineas de error.log:"
+        tail -10 /var/log/nginx/error.log 2>/dev/null
         return 1
     fi
 }
@@ -872,10 +903,36 @@ instalar_tomcat() {
     local puerto="$2"
 
     echo ""
-    echo "[*] Instalando Tomcat versión $version en puerto $puerto..."
+    echo "[*] Instalando Tomcat version $version en puerto $puerto..."
 
-    if ! dnf install -y -q java-17-openjdk tomcat &>/dev/null; then
-        echo "  [!] Error al instalar Tomcat o Java 17."
+    # Fedora 42/43 puede tener el paquete de Java con nombre distinto
+    # Intentar instalar Java primero, probar varios nombres de paquete
+    echo "  [*] Verificando Java..."
+    if ! java -version &>/dev/null 2>&1; then
+        echo "  [*] Java no encontrado. Instalando..."
+        local java_instalado=0
+        for pkg in java-17-openjdk java-21-openjdk java-11-openjdk java-latest-openjdk; do
+            if dnf install -y -q "$pkg" &>/dev/null; then
+                echo "  [OK] Java instalado con paquete: $pkg"
+                java_instalado=1
+                break
+            fi
+        done
+        if [ $java_instalado -eq 0 ]; then
+            echo "  [!] No se pudo instalar Java. Intentando con 'java-17-openjdk' mostrando errores:"
+            dnf install -y java-17-openjdk
+            echo "  [!] Instala Java manualmente y vuelve a ejecutar."
+            return 1
+        fi
+    else
+        echo "  [OK] Java ya esta instalado: $(java -version 2>&1 | head -1)"
+    fi
+
+    # Instalar tomcat
+    echo "  [*] Instalando tomcat..."
+    if ! dnf install -y -q tomcat &>/dev/null; then
+        echo "  [!] Error al instalar tomcat. Mostrando detalle:"
+        dnf install -y tomcat
         return 1
     fi
 
