@@ -484,20 +484,34 @@ seleccionar_version() {
         *)        paquete_dnf="$servicio" ;;
     esac
 
-    echo "  [*] Consultando repositorio para $paquete_dnf..."
+    echo "  [*] Consultando versiones disponibles para $paquete_dnf..."
 
+    # Consultar todas las versiones: repo activo + duplicados (--showduplicates)
+    # y tambien repos de Fedora anteriores si estan disponibles
     mapfile -t todas < <(
-        dnf repoquery --available --queryformat '%{version}-%{release}' "$paquete_dnf" \
-            2>/dev/null | sort -Vu
+        {
+            dnf repoquery --available --showduplicates                 --queryformat '%{version}-%{release}' "$paquete_dnf" 2>/dev/null
+            # Intentar repos de versiones anteriores de Fedora si existen
+            dnf repoquery --available --showduplicates                 --queryformat '%{version}-%{release}' "$paquete_dnf"                 --enablerepo="*" 2>/dev/null
+        } | sort -Vu | grep -v "^$"
     )
 
     if [ ${#todas[@]} -eq 0 ]; then
-        echo "  [!] No se encontraron versiones en el repositorio. Usando 'latest'."
+        echo "  [!] No se encontraron versiones. Usando 'latest'."
         VERSION_ELEGIDA="latest"
         return
     fi
 
     local total=${#todas[@]}
+
+    # Si el repo solo tiene 1 version, informar al usuario honestamente
+    # y mostrar esa version en las 3 opciones indicando que es la unica disponible
+    if [ $total -eq 1 ]; then
+        echo "  [!] Solo hay 1 version disponible en los repositorios configurados."
+        echo "      Para tener mas versiones, activa repos adicionales (ej. Koji, COPR)."
+    fi
+
+    # Construir 3 slots: Latest=ultima, Stable=penultima o misma, Legacy=primera o misma
     local v_latest="${todas[$((total - 1))]}"
     local v_stable v_legacy
 
@@ -516,7 +530,7 @@ seleccionar_version() {
     local etiquetas=("Latest" "Stable" "LTS/Legacy")
 
     echo ""
-    echo "  Versiones disponibles para $paquete_dnf:"
+    echo "  Versiones disponibles para $paquete_dnf (total en repos: $total):"
     for i in 0 1 2; do
         local ver="${opciones[$i]}"
         local etq="${etiquetas[$i]}"
@@ -524,9 +538,13 @@ seleccionar_version() {
         if   [[ "$ver" == *"fc43"* ]]; then dist="[Fedora 43]"
         elif [[ "$ver" == *"fc42"* ]]; then dist="[Fedora 42]"
         elif [[ "$ver" == *"fc41"* ]]; then dist="[Fedora 41]"
+        elif [[ "$ver" == *"fc40"* ]]; then dist="[Fedora 40]"
         else                                dist="[Repositorio]"
         fi
-        printf "    %d) %-40s %s  <- %s\n" "$((i+1))" "$ver" "$dist" "$etq"
+        # Indicar si hay versiones repetidas
+        local nota=""
+        [ "$total" -eq 1 ] && nota=" (unica disponible)"
+        printf "    %d) %-42s %s  <- %s%s\n" "$((i+1))" "$ver" "$dist" "$etq" "$nota"
     done
     echo ""
 
@@ -918,7 +936,7 @@ instalar_tomcat() {
     echo ""
     echo "[*] Instalando Tomcat version $version en puerto $puerto..."
 
-    # Verificar / instalar Java (probar varios nombres de paquete para Fedora 42/43)
+    # Verificar / instalar Java
     echo "  [*] Verificando Java..."
     if ! java -version &>/dev/null 2>&1; then
         echo "  [*] Java no encontrado. Instalando..."
@@ -931,7 +949,7 @@ instalar_tomcat() {
             fi
         done
         if [ $java_ok -eq 0 ]; then
-            echo "  [!] No se pudo instalar Java automaticamente. Ejecutando con salida visible:"
+            echo "  [!] No se pudo instalar Java. Ejecutando con salida visible:"
             dnf install -y java-17-openjdk
             return 1
         fi
@@ -939,40 +957,95 @@ instalar_tomcat() {
         echo "  [OK] Java detectado: $(java -version 2>&1 | head -1)"
     fi
 
-    # Instalar tomcat mostrando errores si falla
+    # Instalar tomcat
     echo "  [*] Instalando paquete tomcat..."
     if ! dnf install -y -q tomcat &>/dev/null; then
-        echo "  [!] Fallo silencioso. Reintentando con salida visible:"
+        echo "  [!] Fallo. Reintentando con salida visible:"
         dnf install -y tomcat
         return 1
     fi
     echo "  [OK] Tomcat instalado."
 
     if [ ! -d "/etc/tomcat" ]; then
-        echo "  [!] /etc/tomcat no existe tras la instalacion. Abortando."
+        echo "  [!] /etc/tomcat no existe. Abortando."
         return 1
     fi
 
-    # ── Configurar puerto en server.xml ──────────────────────────────────────
-    # IMPORTANTE: el sed debe cambiar SOLO el Connector HTTP (port="8080")
-    # sin tocar el puerto del Server (port="8005") ni el AJP (port="8009")
-    # Por eso se filtra explicitamente la linea del Connector HTTP/1.1
-    echo "  [*] Configurando puerto $puerto en server.xml..."
-    sed -i "s|port=\"8080\"|port=\"$puerto\"|g" /etc/tomcat/server.xml
+    # ── Restaurar server.xml a puerto 8080 por si tenia un valor previo ───────
+    # En Fedora 43 el Connector puede estar en formato normal O con executor
+    # Formato normal:    <Connector port="8080" protocol="HTTP/1.1"
+    # Formato executor:  <Connector executor="tomcatThreadPool"
+    #                               port="8080" server="Apache" protocol="HTTP/1.1"
+    # El script primero normaliza a 8080, luego cambia a puerto elegido
+    echo "  [*] Normalizando server.xml a puerto 8080..."
+    # Reemplazar cualquier numero de puerto que este en atributo port= dentro
+    # de lineas que contengan protocol="HTTP/1.1" (el conector HTTP)
+    # Usando python para manejar el formato multi-linea correctamente
+    python3 - "$puerto" /etc/tomcat/server.xml << 'PYEOF'
+import sys, re
 
-    # Ocultar banner de version en el encabezado Server:
-    # Agregar 'server="Apache"' al Connector si no esta ya
-    if ! grep -q 'server="Apache"' /etc/tomcat/server.xml; then
-        sed -i "s|port=\"$puerto\"|port=\"$puerto\" server=\"Apache\"|g" \
-            /etc/tomcat/server.xml
-    fi
+puerto_nuevo = sys.argv[1]
+path = sys.argv[2]
 
-    # Verificar que el cambio se aplico
-    if grep -q "port=\"$puerto\"" /etc/tomcat/server.xml; then
-        echo "  [OK] Puerto $puerto configurado en server.xml."
-    else
-        echo "  [!] No se pudo configurar el puerto en server.xml. Revisa manualmente:"
-        grep -n "Connector\|port=" /etc/tomcat/server.xml | head -10
+with open(path, 'r') as f:
+    xml = f.read()
+
+# Estrategia: dentro del bloque Connector que tiene HTTP/1.1,
+# reemplazar el atributo port="CUALQUIER_NUMERO" por port="PUERTO_NUEVO"
+# El bloque puede ser de una linea o multiples lineas
+
+# Patron: desde <Connector hasta /> pasando por HTTP/1.1
+def reemplazar_connector_http(xml, nuevo_puerto):
+    # Encontrar todos los bloques Connector
+    resultado = []
+    pos = 0
+    while True:
+        inicio = xml.find('<Connector', pos)
+        if inicio == -1:
+            resultado.append(xml[pos:])
+            break
+        fin = xml.find('/>', inicio)
+        if fin == -1:
+            resultado.append(xml[pos:])
+            break
+        bloque = xml[inicio:fin+2]
+        # Solo modificar si es el conector HTTP/1.1 (no AJP, no shutdown)
+        if 'HTTP/1.1' in bloque:
+            # Reemplazar el atributo port="cualquier_cosa"
+            bloque_nuevo = re.sub(r'port="[^"]*"', f'port="{nuevo_puerto}"', bloque)
+            # Asegurarse que tenga server="Apache" para ocultar version
+            if 'server=' not in bloque_nuevo:
+                bloque_nuevo = bloque_nuevo.replace('protocol="HTTP/1.1"',
+                    'server="Apache" protocol="HTTP/1.1"')
+            resultado.append(xml[pos:inicio])
+            resultado.append(bloque_nuevo)
+        else:
+            resultado.append(xml[pos:fin+2])
+        pos = fin + 2
+
+    return ''.join(resultado)
+
+xml_nuevo = reemplazar_connector_http(xml, puerto_nuevo)
+
+with open(path, 'w') as f:
+    f.write(xml_nuevo)
+
+# Verificar
+import re as re2
+if f'port="{puerto_nuevo}"' in xml_nuevo:
+    print(f"  [OK] Puerto {puerto_nuevo} configurado correctamente en server.xml.")
+else:
+    print(f"  [!] No se encontro el Connector HTTP/1.1 en server.xml.")
+    # Mostrar los Connectors para diagnostico
+    for i, line in enumerate(xml_nuevo.split('\n'), 1):
+        if 'Connector' in line or 'port=' in line:
+            print(f"  {i}: {line}")
+    sys.exit(1)
+PYEOF
+
+    local py_exit=$?
+    if [ $py_exit -ne 0 ]; then
+        echo "  [!] Fallo al configurar server.xml. Abortando."
         return 1
     fi
 
@@ -988,13 +1061,12 @@ instalar_tomcat() {
     chmod -R 750 /var/lib/tomcat/webapps
     chcon -R -t tomcat_var_lib_t /var/lib/tomcat/webapps 2>/dev/null
 
-    # ── SELinux: registrar el puerto con el tipo correcto para Tomcat ─────────
-    echo "  [*] Registrando puerto $puerto en SELinux (http_port_t + tomcat_port_t)..."
-    # Tomcat necesita http_port_t O tomcat_port_t segun la version de politica
-    semanage port -a -t http_port_t    -p tcp "$puerto" 2>/dev/null \
-        || semanage port -m -t http_port_t    -p tcp "$puerto" 2>/dev/null
-    semanage port -a -t tomcat_port_t  -p tcp "$puerto" 2>/dev/null \
-        || semanage port -m -t tomcat_port_t  -p tcp "$puerto" 2>/dev/null
+    # ── SELinux: registrar puerto para Tomcat ─────────────────────────────────
+    echo "  [*] Registrando puerto $puerto en SELinux..."
+    semanage port -a -t http_port_t   -p tcp "$puerto" 2>/dev/null \
+        || semanage port -m -t http_port_t   -p tcp "$puerto" 2>/dev/null
+    semanage port -a -t tomcat_port_t -p tcp "$puerto" 2>/dev/null \
+        || semanage port -m -t tomcat_port_t -p tcp "$puerto" 2>/dev/null
     echo "  [OK] Puerto $puerto registrado en SELinux."
 
     # ── Firewall ──────────────────────────────────────────────────────────────
@@ -1004,19 +1076,17 @@ instalar_tomcat() {
     systemctl enable tomcat --now &>/dev/null
     systemctl restart tomcat
 
-    # Esperar hasta 30s a que el puerto aparezca (Tomcat arranca lento)
     echo "  [*] Esperando que Tomcat escuche en puerto $puerto (hasta 30s)..."
     local intentos=0
     while [ $intentos -lt 30 ]; do
         sleep 1
         if ss -tuln 2>/dev/null | grep -q ":${puerto}"; then
-            echo "  [OK] Puerto $puerto detectado en ss (${intentos}s)."
+            echo "  [OK] Puerto $puerto detectado (${intentos}s)."
             break
         fi
         ((intentos++))
     done
 
-    # Verificar estado final
     sleep 1
     if systemctl is-active --quiet tomcat && ss -tuln 2>/dev/null | grep -q ":${puerto}"; then
         echo ""
@@ -1030,18 +1100,15 @@ instalar_tomcat() {
         ss -tuln | grep ":${puerto}"
     else
         echo ""
-        echo "  [!] Tomcat no escucha en el puerto $puerto tras 30s."
+        echo "  [!] Tomcat no escucha en puerto $puerto tras 30s."
         echo "  --- Estado del servicio ---"
         systemctl status tomcat --no-pager -n 5
-        echo ""
-        echo "  --- Ultimas lineas del log de Tomcat ---"
+        echo "  --- Log de Tomcat ---"
         journalctl -u tomcat -n 20 --no-pager
-        echo ""
-        echo "  --- Puertos actualmente en escucha ---"
-        ss -tuln | grep -E "LISTEN" | head -10
-        echo ""
-        echo "  --- Verificar server.xml ---"
-        grep -n "Connector\|port=" /etc/tomcat/server.xml | head -10
+        echo "  --- Puertos en escucha ---"
+        ss -tuln | grep LISTEN | head -15
+        echo "  --- server.xml (Connectors) ---"
+        grep -n "Connector\|port=" /etc/tomcat/server.xml | head -15
         return 1
     fi
 }
