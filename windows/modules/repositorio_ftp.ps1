@@ -135,7 +135,7 @@ $adminGrp = (New-Object Security.Principal.SecurityIdentifier "S-1-5-32-544").Tr
     [Security.Principal.NTAccount]).Value
 
 # Raiz del sitio: solo Admins y SYSTEM tienen control total
-# danger NO debe tener control total aqui — eso causa el error 530
+# danger NO debe tener control total aqui - eso causa el error 530
 icacls $FTP_ROOT    /inheritance:r                      /Q | Out-Null
 icacls $FTP_ROOT    /grant "SYSTEM:(OI)(CI)F"           /Q | Out-Null
 icacls $FTP_ROOT    /grant "${adminGrp}:(OI)(CI)F"      /Q | Out-Null
@@ -225,7 +225,7 @@ function Obtener-ZIP {
     }
 }
 
-# Apache 2.4.62 — fuente: apachelounge.com (proveedor oficial para Windows)
+# Apache 2.4.62 - fuente: apachelounge.com (proveedor oficial para Windows)
 Obtener-ZIP `
     -Url           "https://www.apachelounge.com/download/VS17/binaries/httpd-2.4.62-240904-win64-VS17.zip" `
     -NombreArchivo "apache_2.4.62.zip" `
@@ -234,7 +234,7 @@ Obtener-ZIP `
 
 Write-Host ""
 
-# Nginx 1.26.2 — fuente: nginx.org (sitio oficial)
+# Nginx 1.26.2 - fuente: nginx.org (sitio oficial)
 Obtener-ZIP `
     -Url           "https://nginx.org/download/nginx-1.26.2.zip" `
     -NombreArchivo "nginx_1.26.2.zip" `

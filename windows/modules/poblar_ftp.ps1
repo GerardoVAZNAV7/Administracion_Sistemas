@@ -52,7 +52,7 @@ function Descargar-Instalador {
     $rutaCompleta = Join-Path $CarpetaDestino $NombreArchivo
     $rutaEnC      = "C:\$NombreArchivo"
 
-    # Si ya existe en C:\ (de la Practica 6), solo copiamos — no descargamos de nuevo
+    # Si ya existe en C:\ (de la Practica 6), solo copiamos - no descargamos de nuevo
     if (Test-Path $rutaEnC) {
         Write-Warn "  Encontrado en C:\$NombreArchivo. Copiando al repositorio..."
         Copy-Item -Path $rutaEnC -Destination $rutaCompleta -Force
