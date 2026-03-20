@@ -17,9 +17,9 @@
 # CONFIGURACIÓN GLOBAL
 # Ajusta estas variables según tu entorno real
 # ─────────────────────────────────────────────────────────────────────────────
-FTP_SERVER="192.168.56.104"   # IP del servidor FTP (Práctica 5)
-FTP_USER="chofis"             # Usuario FTP del repositorio privado
-FTP_PASS="3006"               # Contraseña FTP
+FTP_SERVER="192.168.56.101"   # IP del servidor FTP (Práctica 5)
+FTP_USER="danger"             # Usuario FTP del repositorio privado
+FTP_PASS="Gerardo1234!!"               # Contraseña FTP
 RESUMEN_INSTALACIONES=()      # Arreglo para el resumen final
 
 

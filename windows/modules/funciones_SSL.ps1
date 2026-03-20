@@ -537,8 +537,8 @@ function Navegar-Descargar-FTP {
 
     Write-Host "--- BUSCANDO INSTALADORES DE $Servicio EN FTP ---" -ForegroundColor Cyan
     
-    $ftpUser = "repositorio"
-    $ftpPassword = "Hola1234." 
+    $ftpUser = "danger"
+    $ftpPassword = "Gerardo1234!!" 
     
     # LA CORRECCIÓN: Como IIS ya te mete a la carpeta del usuario, 
     # solo necesitamos entrar a la subcarpeta que vimos en tu captura.
