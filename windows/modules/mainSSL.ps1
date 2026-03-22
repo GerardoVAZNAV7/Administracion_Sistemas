@@ -2,38 +2,49 @@
 # mainSSL.ps1
 # Orquestador de instalacion hibrida SSL/TLS para Windows Server 2022
 # Practica 7: Infraestructura de Despliegue Seguro
-#
-# Servicios disponibles (Windows):
-#   1) Apache HTTP Server  - HTTP/HTTPS
-#   2) Nginx Web Server    - HTTP/HTTPS
-#   3) IIS Web Server      - HTTP/HTTPS
-#   4) IIS FTP Server      - FTP/FTPS
-#
-# NOTA: Sin Tomcat. Windows solo tiene IIS, Apache, Nginx e IIS-FTP.
-#
-# USO:
-#   1. PowerShell como Administrador
-#   2. Set-ExecutionPolicy Bypass -Scope Process
-#   3. .\windows\modules\mainSSL.ps1
 # =============================================================================
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding            = [System.Text.Encoding]::UTF8
 
-# Cargar funciones desde el mismo directorio
-$ScriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$funcionesPath = Join-Path $ScriptDir "funciones_SSL.ps1"
+# =============================================================================
+# CARGAR FUNCIONES
+# ─────────────────────────────────────────────────────────────────────────────
+# LECCION: $PSScriptRoot es la variable correcta para referenciar archivos
+# que están junto al script actual.
+#
+# $MyInvocation.MyCommand.Definition puede devolver vacío o incorrecto
+# dependiendo de cómo PowerShell cargó el script (dot-source, llamada directa,
+# ISE, etc.). $PSScriptRoot SIEMPRE contiene la carpeta del .ps1 en ejecución.
+# =============================================================================
+$funcionesPath = Join-Path $PSScriptRoot "funciones_SSL.ps1"
 
 if (-not (Test-Path $funcionesPath)) {
-    Write-Host "[ERROR] No se encontro funciones_SSL.ps1 en: $ScriptDir" -ForegroundColor Red
+    Write-Host "[ERROR] No se encontro funciones_SSL.ps1 en: $PSScriptRoot" -ForegroundColor Red
     Write-Host "        Ambos archivos deben estar en la misma carpeta." -ForegroundColor Yellow
     Read-Host "Presiona Enter para salir"
     exit 1
 }
 
+# Dot-source: carga todas las funciones en el scope actual
 . $funcionesPath
 
-# Verificar privilegios de Administrador
+# Verificar que las funciones quedaron cargadas (diagnóstico temprano)
+$funcionesRequeridas = @("Instalar-Apache", "Instalar-Nginx", "Instalar-IIS-Web", "Instalar-IIS-FTP")
+$faltantes = $funcionesRequeridas | Where-Object {
+    -not (Get-Command $_ -ErrorAction SilentlyContinue)
+}
+if ($faltantes) {
+    Write-Host "[ERROR] Las siguientes funciones no se cargaron desde funciones_SSL.ps1:" -ForegroundColor Red
+    $faltantes | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
+    Write-Host "  Verifica que funciones_SSL.ps1 no tenga errores de sintaxis." -ForegroundColor Yellow
+    Read-Host "Presiona Enter para salir"
+    exit 1
+}
+
+# =============================================================================
+# VERIFICAR PRIVILEGIOS
+# =============================================================================
 $esAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator
 )
@@ -48,7 +59,6 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process -Force -ErrorAc
 # =============================================================================
 # MENU
 # =============================================================================
-
 function Mostrar-MenuSSL {
     Clear-Host
     Write-Host ""
@@ -69,7 +79,6 @@ function Mostrar-MenuSSL {
 # =============================================================================
 # BUCLE PRINCIPAL
 # =============================================================================
-
 do {
     Mostrar-MenuSSL
     $opcion = Read-Host "  Selecciona una opcion (0-5)"
@@ -125,7 +134,6 @@ do {
             Write-Host ""
             Write-Host "  Estado de servicios:" -ForegroundColor Cyan
 
-            # IIS (W3SVC) e IIS-FTP (ftpsvc)
             foreach ($svc in @("W3SVC", "ftpsvc")) {
                 $s      = Get-Service $svc -ErrorAction SilentlyContinue
                 $estado = if ($s) { $s.Status.ToString() } else { "No instalado" }
@@ -133,7 +141,6 @@ do {
                 Write-Host ("    {0,-10} -> {1}" -f $svc, $estado) -ForegroundColor $color
             }
 
-            # Apache y Nginx (procesos standalone)
             foreach ($proc in @("httpd", "nginx")) {
                 $p      = Get-Process $proc -ErrorAction SilentlyContinue
                 $estado = if ($p) { "Corriendo (PID: $($p.Id))" } else { "No activo" }
@@ -141,7 +148,6 @@ do {
                 Write-Host ("    {0,-10} -> {1}" -f $proc, $estado) -ForegroundColor $color
             }
 
-            # Puertos en escucha
             Write-Host ""
             Write-Host "  Puertos HTTP/HTTPS activos:" -ForegroundColor Cyan
             netstat -ano 2>$null | Select-String "LISTENING" |
