@@ -121,7 +121,8 @@ function Instalar-Apache {
     Write-Host "`n--- INSTALANDO APACHE ---" -ForegroundColor Cyan
     Limpiar-Apache
 
-    $Puerto = Obtener-Puerto -Servicio "Apache"
+    $Puerto = 443
+    Write-Host "  [OK] Apache fijo en puerto: 443" -ForegroundColor DarkGray
     Write-Host "  [OK] Puerto elegido: $Puerto" -ForegroundColor DarkGray
 
     Write-Host "1) Descargar de la Web (Chocolatey)"
@@ -158,8 +159,8 @@ function Instalar-Apache {
         Expand-Archive -Path $rutaZip -DestinationPath "C:\" -Force
     }
 
-    $resSSL = Read-Host "Desea activar SSL? [S/N]"
-    $isSSL  = ($resSSL -match '^[sS]$')
+    # Apache siempre usa SSL en puerto 443 (fijo)
+    $isSSL = $true
 
     # ===========================================================
     # ESTRATEGIA: escribir httpd.conf DESDE CERO
@@ -246,40 +247,6 @@ SSLSessionCacheTimeout 300
         New-NetFirewallRule -DisplayName "Apache HTTP 80" -Direction Inbound `
             -LocalPort 80 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
         New-NetFirewallRule -DisplayName "Apache HTTPS $Puerto" -Direction Inbound `
-            -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
-    } else {
-        $httpConf = @"
-ServerRoot "C:/Apache24"
-Listen ${Puerto}
-ServerName localhost:${Puerto}
-
-LoadModule mpm_winnt_module modules/mod_mpm_winnt.so
-LoadModule authn_core_module modules/mod_authn_core.so
-LoadModule authz_core_module modules/mod_authz_core.so
-LoadModule mime_module modules/mod_mime.so
-LoadModule log_config_module modules/mod_log_config.so
-
-TypesConfig conf/mime.types
-DocumentRoot "C:/Apache24/htdocs"
-<Directory "C:/Apache24/htdocs">
-    Options Indexes FollowSymLinks
-    AllowOverride None
-    Require all granted
-</Directory>
-
-ErrorLog "logs/error.log"
-LogLevel warn
-LogFormat "%h %l %u %t "%r" %>s %b" common
-CustomLog "logs/access.log" common
-"@
-        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-        [System.IO.File]::WriteAllText($confPath, $httpConf, $utf8NoBom)
-
-        Escribir-Resumen "[OK] Apache: HTTP puro puerto $Puerto."
-        $protocolo = "HTTP (Inseguro)"
-        $bgColor   = "#2c3e50"
-
-        New-NetFirewallRule -DisplayName "Apache HTTP $Puerto" -Direction Inbound `
             -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
     }
 
