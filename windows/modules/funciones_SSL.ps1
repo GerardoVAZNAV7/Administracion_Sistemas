@@ -287,14 +287,50 @@ SSLSessionCacheTimeout 300
         -LocalPort 443 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
 
     # Lanzar
+    # Verificar si el puerto 443 ya esta ocupado (IIS u otro)
+    $p443 = netstat -ano 2>$null | Select-String ":443 "
+    if ($p443) {
+        Write-Host "  [!] PUERTO 443 YA OCUPADO. Mostrando quien lo usa:" -ForegroundColor Red
+        $p443 | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        Write-Host "  Sugerencia: instala IIS primero en otro puerto (ej. 8443)" -ForegroundColor Yellow
+        Write-Host "  o detente en IIS y ejecuta Apache de nuevo." -ForegroundColor Yellow
+        return
+    }
+
+    # Verificar VCRUNTIME140.dll (Apache lo necesita para arrancar)
+    $vcDll = Get-ChildItem "C:\Windows\System32\VCRUNTIME140.dll" -ErrorAction SilentlyContinue
+    if (-not $vcDll) {
+        Write-Host "  [!] Falta VCRUNTIME140.dll. Instalando VC++ Redistributable..." -ForegroundColor Yellow
+        $vcUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+        $vcExe = "$env:TEMPc_redist.x64.exe"
+        try {
+            Invoke-WebRequest -Uri $vcUrl -OutFile $vcExe -UseBasicParsing -ErrorAction Stop
+            Start-Process -FilePath $vcExe -ArgumentList "/install /quiet /norestart" -Wait
+            Remove-Item $vcExe -Force -ErrorAction SilentlyContinue
+            Write-Host "  [OK] VC++ Redistributable instalado." -ForegroundColor Green
+        } catch {
+            Write-Host "  [!] No se pudo instalar VC++. Apache puede fallar." -ForegroundColor Red
+        }
+    }
+
     Write-Host "Iniciando Apache en puerto 443..." -ForegroundColor Cyan
     $proc = Start-Process -FilePath "$apacheDir\bin\httpd.exe" -WindowStyle Hidden -PassThru
     Start-Sleep -Seconds 3
 
     if ($proc.HasExited) {
         Write-Host "  [!] Apache termino de inmediato." -ForegroundColor Red
-        Get-Content "$apacheDir\logs\error.log" -Tail 20 -ErrorAction SilentlyContinue |
-            ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        Write-Host "  --- error.log ---" -ForegroundColor Yellow
+        if (Test-Path "$apacheDir\logs\error.log") {
+            Get-Content "$apacheDir\logs\error.log" -Tail 25 |
+                ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        } else {
+            Write-Host "      (error.log no existe - falla antes de iniciar)" -ForegroundColor Red
+            Write-Host "      Causa probable: VCRUNTIME140.dll faltante o puerto 443 ocupado" -ForegroundColor Red
+        }
+        # Intentar lanzar en modo consola para ver el error directo
+        Write-Host "  --- Salida directa de httpd.exe ---" -ForegroundColor Yellow
+        $directOut = & "$apacheDir\bin\httpd.exe" 2>&1
+        $directOut | Select-Object -First 10 | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
         return
     }
 
