@@ -1,7 +1,6 @@
 # =============================================================================
 # funciones_ssl.ps1  -  Servidores HTTP/HTTPS con puerto elegible
-# Permite levantar multiples instancias al mismo tiempo en puertos distintos
-# SIN caracteres no-ASCII para compatibilidad con PowerShell en Windows Server
+# VERSION CORREGIDA: limpieza SELECTIVA para no matar servidores ya activos
 # =============================================================================
 
 $global:resumenInstalaciones = @()
@@ -13,8 +12,6 @@ function Escribir-Resumen {
 
 # =============================================================================
 # VALIDAR PUERTO
-# Separamos la validacion en su propia funcion para no repetir el mismo bloque
-# en Apache, Nginx e IIS (principio DRY).
 # =============================================================================
 function Obtener-Puerto {
     param([string]$Servicio = "el servicio")
@@ -52,46 +49,77 @@ function Obtener-Puerto {
 }
 
 # =============================================================================
-# LIBERAR PUERTOS
+# LIMPIAR SOLO APACHE  (no toca Nginx ni IIS)
 # =============================================================================
-function Liberar-Puertos-Web {
-    Write-Host "Limpiando procesos residuales..." -ForegroundColor Yellow
-
-    taskkill /F /IM httpd.exe /T 2>$null
-    taskkill /F /IM nginx.exe /T 2>$null
-
-    foreach ($svc in @("W3SVC","WAS","Apache-Practica7","apache","Apache2.4")) {
-        Stop-Service -Name $svc -Force -ErrorAction SilentlyContinue
-    }
+function Limpiar-Apache {
+    Write-Host "  Deteniendo instancias previas de Apache..." -ForegroundColor Yellow
+    taskkill /F /IM httpd.exe /T 2>$null | Out-Null
     foreach ($svc in @("Apache-Practica7","apache","Apache2.4")) {
+        Stop-Service  -Name $svc -Force -ErrorAction SilentlyContinue
         sc.exe delete $svc | Out-Null
     }
-
+    Remove-Item -Path "C:\Apache24" -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "C:\tools\apache24" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "C:\Apache24"       -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "$env:APPDATA\Apache24" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "C:\tools\nginx"    -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "C:\nginx"          -Recurse -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+}
 
+# =============================================================================
+# LIMPIAR SOLO NGINX  (no toca Apache ni IIS)
+# =============================================================================
+function Limpiar-Nginx {
+    Write-Host "  Deteniendo instancias previas de Nginx..." -ForegroundColor Yellow
+    taskkill /F /IM nginx.exe /T 2>$null | Out-Null
+    Stop-Service -Name "nginx" -Force -ErrorAction SilentlyContinue
+    sc.exe delete "nginx" | Out-Null
+    Remove-Item -Path "C:\nginx" -Recurse -Force -ErrorAction SilentlyContinue
     Get-ChildItem -Path "C:\" -Filter "nginx-*" -Directory -ErrorAction SilentlyContinue |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+}
 
+# =============================================================================
+# LIMPIAR SOLO IIS  (no toca Apache ni Nginx)
+# =============================================================================
+function Limpiar-IIS {
+    Write-Host "  Limpiando sitios IIS anteriores..." -ForegroundColor Yellow
     Import-Module WebAdministration -ErrorAction SilentlyContinue
-    foreach ($site in @("SitioIIS_Practica7","Default Web Site")) {
-        if (Get-Website -Name $site -ErrorAction SilentlyContinue) {
-            Remove-Website -Name $site
+    Get-Website -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like "SitioIIS_Practica7*" } |
+        ForEach-Object {
+            Stop-Website   -Name $_.Name -ErrorAction SilentlyContinue
+            Remove-Website -Name $_.Name -ErrorAction SilentlyContinue
+        }
+}
+
+# =============================================================================
+# ESPERAR A QUE UN PUERTO ESTE EN ESCUCHA
+# Reintenta hasta $intentos veces con pausa de 1 segundo entre cada intento.
+# Devuelve $true si el puerto responde, $false si se agoto el tiempo.
+# =============================================================================
+function Esperar-Puerto {
+    param([int]$Puerto, [int]$intentos = 15)
+    Write-Host "  Esperando que el puerto $Puerto quede activo..." -ForegroundColor DarkGray
+    for ($i = 0; $i -lt $intentos; $i++) {
+        Start-Sleep -Seconds 1
+        $activo = netstat -ano 2>$null | Select-String ":$Puerto "
+        if ($activo) {
+            Write-Host "  [OK] Puerto $Puerto escuchando." -ForegroundColor Green
+            return $true
         }
     }
-
-    Write-Host "Entorno limpio." -ForegroundColor Green
+    Write-Host "  [!] Puerto $Puerto no respondio en $intentos segundos." -ForegroundColor Red
+    return $false
 }
 
 # =============================================================================
 # INSTALAR APACHE
+# Limpia SOLO Apache antes de instalar.
+# No toca Nginx ni IIS aunque esten corriendo.
 # =============================================================================
 function Instalar-Apache {
     Write-Host "`n--- INSTALANDO APACHE ---" -ForegroundColor Cyan
-    Liberar-Puertos-Web
+    Limpiar-Apache
 
     $Puerto = Obtener-Puerto -Servicio "Apache"
     Write-Host "  [OK] Puerto elegido: $Puerto" -ForegroundColor DarkGray
@@ -242,16 +270,33 @@ SSLSessionCacheTimeout 300
     Set-Content -Path "$apacheDir\htdocs\index.html" -Value $html -Force
 
     Write-Host "Iniciando Apache en puerto $Puerto..." -ForegroundColor Cyan
-    Start-Process -FilePath "$apacheDir\bin\httpd.exe" -WindowStyle Hidden
-    Write-Host "[OK] Apache instalado." -ForegroundColor Green
+    $proc = Start-Process -FilePath "$apacheDir\bin\httpd.exe" -WindowStyle Hidden -PassThru
+    Start-Sleep -Seconds 2
+
+    if ($proc.HasExited) {
+        Write-Host "  [!] Apache termino de inmediato. Revisa: $apacheDir\logs\error.log" -ForegroundColor Red
+        Get-Content "$apacheDir\logs\error.log" -Tail 5 -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        return
+    }
+
+    $ok = Esperar-Puerto -Puerto $Puerto -intentos 15
+    if ($ok) {
+        Write-Host "[OK] Apache corriendo. Abre: http://192.168.56.102:$Puerto" -ForegroundColor Green
+    } else {
+        Write-Host "[!] Apache inicio pero el puerto $Puerto no responde." -ForegroundColor Red
+        Write-Host "    Revisa: $apacheDir\logs\error.log" -ForegroundColor Yellow
+    }
 }
 
 # =============================================================================
 # INSTALAR NGINX
+# Limpia SOLO Nginx antes de instalar.
+# No toca Apache ni IIS aunque esten corriendo.
 # =============================================================================
 function Instalar-Nginx {
     Write-Host "`n--- INSTALANDO NGINX ---" -ForegroundColor Cyan
-    Liberar-Puertos-Web
+    Limpiar-Nginx
 
     $Puerto = Obtener-Puerto -Servicio "Nginx"
     Write-Host "  [OK] Puerto elegido: $Puerto" -ForegroundColor DarkGray
@@ -346,8 +391,8 @@ http {
     server {
         listen ${Puerto} ssl;
         server_name www.reprobados.com;
-        ssl_certificate     server.crt;
-        ssl_certificate_key server.key;
+        ssl_certificate     conf/server.crt;
+        ssl_certificate_key conf/server.key;
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
         location / { root html; index index.html index.htm; }
     }
@@ -385,7 +430,9 @@ http {
             -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
     }
 
-    Set-Content -Path "$nginxDir\conf\nginx.conf" -Value $nginxConf -Force
+    # Escribir nginx.conf sin BOM (Nginx falla con BOM)
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText("$nginxDir\conf\nginx.conf", $nginxConf, $utf8NoBom)
 
     $version = (& "$nginxDir\nginx.exe" -v 2>&1) -replace '.*nginx/', ''
     if (-not (Test-Path "$nginxDir\html")) {
@@ -408,20 +455,46 @@ http {
 "@
     Set-Content -Path "$nginxDir\html\index.html" -Value $html -Force
 
+    # Validar config antes de lanzar
+    $test = & "$nginxDir\nginx.exe" -t -p "$nginxDir" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [!] nginx.conf invalido:" -ForegroundColor Red
+        $test | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        $ProgressPreference = $viejoProgreso
+        return
+    }
+
     Write-Host "Iniciando Nginx en puerto $Puerto..." -ForegroundColor Cyan
-    Start-Process -FilePath "$nginxDir\nginx.exe" -WorkingDirectory $nginxDir -WindowStyle Hidden
+    $proc = Start-Process -FilePath "$nginxDir\nginx.exe" -WorkingDirectory $nginxDir -PassThru
+    Start-Sleep -Seconds 2
+
+    if ($proc.HasExited) {
+        Write-Host "  [!] Nginx termino de inmediato." -ForegroundColor Red
+        Get-Content "$nginxDir\logs\error.log" -Tail 5 -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        $ProgressPreference = $viejoProgreso
+        return
+    }
+
+    $ok = Esperar-Puerto -Puerto $Puerto -intentos 15
+    if ($ok) {
+        Write-Host "[OK] Nginx corriendo. Abre: http://192.168.56.102:$Puerto" -ForegroundColor Green
+    } else {
+        Write-Host "[!] Nginx inicio pero el puerto $Puerto no responde." -ForegroundColor Red
+        Write-Host "    Revisa: $nginxDir\logs\error.log" -ForegroundColor Yellow
+    }
+
     $ProgressPreference = $viejoProgreso
-    Write-Host "[OK] Nginx instalado." -ForegroundColor Green
 }
 
 # =============================================================================
 # INSTALAR IIS WEB
-# IIS usa bindings: combinacion IP:Puerto:HostHeader.
-# El nombre del sitio incluye el puerto para evitar duplicados.
+# Limpia SOLO sitios IIS anteriores.
+# No toca Apache ni Nginx.
 # =============================================================================
 function Instalar-IIS-Web {
     Write-Host "`n--- INSTALANDO IIS WEB ---" -ForegroundColor Cyan
-    Liberar-Puertos-Web
+    Limpiar-IIS
 
     $Puerto = Obtener-Puerto -Servicio "IIS"
     Write-Host "  [OK] Puerto elegido: $Puerto" -ForegroundColor DarkGray
@@ -433,14 +506,10 @@ function Instalar-IIS-Web {
 
     Import-Module WebAdministration -ErrorAction SilentlyContinue
 
-    Get-Website | Where-Object { $_.Name -like "SitioIIS_Practica7*" } | ForEach-Object {
-        Stop-Website   -Name $_.Name -ErrorAction SilentlyContinue
-        Remove-Website -Name $_.Name -ErrorAction SilentlyContinue
-    }
-
     $resSSL = Read-Host "Desea activar SSL? [S/N]"
     $isSSL  = ($resSSL -match '^[sS]$')
 
+    # Nombre unico con puerto para poder tener varios sitios IIS simultaneos
     $siteName = "SitioIIS_Practica7_$Puerto"
     $sitePath = "C:\inetpub\wwwroot\$siteName"
 
@@ -517,7 +586,13 @@ function Instalar-IIS-Web {
     }
 
     Start-Website -Name $siteName -ErrorAction SilentlyContinue
-    Write-Host "[OK] IIS configurado en puerto $Puerto." -ForegroundColor Green
+
+    $ok = Esperar-Puerto -Puerto $Puerto -intentos 15
+    if ($ok) {
+        Write-Host "[OK] IIS corriendo. Abre: http://192.168.56.102:$Puerto" -ForegroundColor Green
+    } else {
+        Write-Host "[!] IIS inicio pero el puerto $Puerto no responde todavia." -ForegroundColor Yellow
+    }
 }
 
 # =============================================================================
