@@ -121,7 +121,6 @@ function Instalar-Apache {
     Write-Host "`n--- INSTALANDO APACHE (puerto fijo 443 + SSL) ---" -ForegroundColor Cyan
     Limpiar-Apache
 
-    $Puerto    = 443
     $apacheDir = "C:\Apache24"
     $chocoExe  = "C:\ProgramData\chocolatey\bin\choco.exe"
 
@@ -167,67 +166,92 @@ function Instalar-Apache {
         -days 365 -subj "/CN=www.reprobados.com"
     Set-Location "C:\"
 
-    # Escribir httpd.conf desde cero - sin depender del conf de Chocolatey
-    # NOTA: LogFormat usa comilla simple para evitar conflicto con PowerShell here-string
-    $confPath = "$apacheDir\conf\httpd.conf"
-    $logFmt   = '%h %l %u %t "%r" %>s %b'
+    # =========================================================
+    # DETECTAR MODULOS REALES que existen en esta instalacion
+    # Cada version de Apache puede tener nombres distintos.
+    # Leemos el httpd.conf ORIGINAL para obtener los LoadModule
+    # que el propio instalador sabe que existen, y solo cambiamos
+    # las rutas y agregamos los modulos SSL que necesitamos.
+    # =========================================================
+    $confPath    = "$apacheDir\conf\httpd.conf"
+    $confOriginal = Get-Content $confPath -Raw
 
-    $httpConfLines = @(
-        'ServerRoot "C:/Apache24"',
-        'Listen 80',
-        'Listen 443',
-        'ServerName localhost:80',
-        '',
-        'LoadModule mpm_winnt_module      modules/mod_mpm_winnt.so',
-        'LoadModule authn_core_module     modules/mod_authn_core.so',
-        'LoadModule authz_core_module     modules/mod_authz_core.so',
-        'LoadModule mime_module           modules/mod_mime.so',
-        'LoadModule log_config_module     modules/mod_log_config.so',
-        'LoadModule ssl_module            modules/mod_ssl.so',
-        'LoadModule socache_shmcb_module  modules/mod_socache_shmcb.so',
-        'LoadModule rewrite_module        modules/mod_rewrite.so',
-        'LoadModule headers_module        modules/mod_headers.so',
-        '',
-        'TypesConfig conf/mime.types',
-        'DocumentRoot "C:/Apache24/htdocs"',
-        '<Directory "C:/Apache24/htdocs">',
-        '    Options Indexes FollowSymLinks',
-        '    AllowOverride None',
-        '    Require all granted',
-        '</Directory>',
-        '',
-        'ErrorLog "logs/error.log"',
-        'LogLevel warn',
-        "LogFormat `"$logFmt`" common",
-        'CustomLog "logs/access.log" common',
-        '',
-        'SSLCipherSuite HIGH:MEDIUM:!MD5:!RC4:!3DES',
-        'SSLProtocol all -SSLv3',
-        'SSLPassPhraseDialog builtin',
-        'SSLSessionCache "shmcb:C:/Apache24/logs/ssl_scache(512000)"',
-        'SSLSessionCacheTimeout 300',
-        '',
-        '<VirtualHost *:80>',
-        '    ServerName www.reprobados.com',
-        '    RewriteEngine On',
-        '    RewriteCond %{HTTPS} off',
-        '    RewriteRule ^(.*)$ https://%{HTTP_HOST}:443%{REQUEST_URI} [L,R=301]',
-        '</VirtualHost>',
-        '',
-        '<VirtualHost _default_:443>',
-        '    DocumentRoot "C:/Apache24/htdocs"',
-        '    ServerName www.reprobados.com:443',
-        '    ErrorLog    "C:/Apache24/logs/error.log"',
-        '    TransferLog "C:/Apache24/logs/access.log"',
-        '    SSLEngine on',
-        '    SSLCertificateFile    "C:/Apache24/conf/server.crt"',
-        '    SSLCertificateKeyFile "C:/Apache24/conf/server.key"',
-        '    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"',
-        '</VirtualHost>'
+    Write-Host "  Leyendo modulos del httpd.conf original..." -ForegroundColor DarkGray
+
+    # Extraer todas las lineas LoadModule del original (las que NO estan comentadas)
+    $loadMods = ($confOriginal -split "`n") | Where-Object {
+        $_ -match "^\s*LoadModule\s"
+    }
+
+    # Modulos SSL extra que necesitamos agregar si no estan ya
+    $modosRequeridos = @(
+        "mod_ssl.so",
+        "mod_socache_shmcb.so",
+        "mod_rewrite.so",
+        "mod_headers.so"
     )
+    foreach ($mod in $modosRequeridos) {
+        $yaEsta = $loadMods | Where-Object { $_ -match $mod }
+        if (-not $yaEsta) {
+            $nombre = $mod -replace "mod_","" -replace "\.so",""
+            $linea  = "LoadModule ${nombre}_module modules/$mod"
+            if (Test-Path "$apacheDir\modules\$mod") {
+                $loadMods += $linea
+                Write-Host "  [+] Agregado: $linea" -ForegroundColor DarkGray
+            }
+        }
+    }
+
+    $loadModsStr = $loadMods -join "`r`n"
+
+    # Construir el httpd.conf final con rutas correctas
+    $conf = @"
+ServerRoot "C:/Apache24"
+Listen 80
+Listen 443
+ServerName localhost:80
+
+$loadModsStr
+
+TypesConfig conf/mime.types
+DocumentRoot "C:/Apache24/htdocs"
+<Directory "C:/Apache24/htdocs">
+    Options Indexes FollowSymLinks
+    AllowOverride None
+    Require all granted
+</Directory>
+
+ErrorLog "logs/error.log"
+LogLevel warn
+CustomLog "logs/access.log" common
+
+SSLCipherSuite HIGH:MEDIUM:!MD5:!RC4:!3DES
+SSLProtocol all -SSLv3
+SSLPassPhraseDialog builtin
+SSLSessionCache "shmcb:C:/Apache24/logs/ssl_scache(512000)"
+SSLSessionCacheTimeout 300
+
+<VirtualHost *:80>
+    ServerName www.reprobados.com
+    RewriteEngine On
+    RewriteCond %{HTTPS} off
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}:443%{REQUEST_URI} [L,R=301]
+</VirtualHost>
+
+<VirtualHost _default_:443>
+    DocumentRoot "C:/Apache24/htdocs"
+    ServerName www.reprobados.com:443
+    ErrorLog    "C:/Apache24/logs/error.log"
+    TransferLog "C:/Apache24/logs/access.log"
+    SSLEngine on
+    SSLCertificateFile    "C:/Apache24/conf/server.crt"
+    SSLCertificateKeyFile "C:/Apache24/conf/server.key"
+    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+</VirtualHost>
+"@
 
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllLines($confPath, $httpConfLines, $utf8NoBom)
+    [System.IO.File]::WriteAllText($confPath, $conf, $utf8NoBom)
     Write-Host "  [OK] httpd.conf escrito." -ForegroundColor DarkGray
 
     # Validar antes de lanzar
@@ -249,7 +273,7 @@ function Instalar-Apache {
     <hr style='width:80%;margin:20px auto;'>
     <p><b>Protocolo:</b> HTTPS (Seguro)</p>
     <p><b>Puerto:</b> 443</p>
-    <p>Configuracion para www.reprobados.com</p>
+    <p>www.reprobados.com</p>
   </div>
 </body>
 </html>
