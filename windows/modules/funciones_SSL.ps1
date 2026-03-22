@@ -124,36 +124,61 @@ function Instalar-Apache {
     $apacheDir = "C:\Apache24"
     $chocoExe  = "C:\ProgramData\chocolatey\bin\choco.exe"
 
-    Write-Host "1) Descargar de la Web (Chocolatey)"
-    Write-Host "2) Descargar del FTP (Privado)"
-    $origen = Read-Host "Selecciona el origen"
+    # Si Apache ya esta en C:\Apache24 de un intento anterior, preguntar si reutilizar
+    if (Test-Path "$apacheDir\bin\httpd.exe") {
+        Write-Host "  Apache ya esta en $apacheDir" -ForegroundColor Green
+        $reusar = Read-Host "  Reutilizar instalacion existente? [S/N]"
+        if ($reusar -notmatch '^[nN]$') {
+            Write-Host "  [OK] Usando Apache existente." -ForegroundColor Green
+            # Saltar descarga, ir directo a configurar
+        } else {
+            Limpiar-Apache
+            # Continuar con descarga
+            goto_descarga:
+            Write-Host "1) Descargar de la Web (Chocolatey)"
+            Write-Host "2) Descargar del FTP (Privado)"
+            $origen = Read-Host "Selecciona el origen"
+        }
+    }
 
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    if (-not (Test-Path "$apacheDir\bin\httpd.exe")) {
+        Write-Host "1) Descargar de la Web (Chocolatey)"
+        Write-Host "2) Descargar del FTP (Privado)"
+        $origen = Read-Host "Selecciona el origen"
 
-    if ($origen -eq "1") {
-        if (-not (Test-Path $chocoExe)) {
-            Set-ExecutionPolicy Bypass -Scope Process -Force
-            Invoke-Expression ((New-Object System.Net.WebClient).DownloadString(
-                "https://community.chocolatey.org/install.ps1"))
-        }
-        & $chocoExe install apache-httpd -y --force --params "/NoService" --limit-output
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-        $tempDir = ""
-        foreach ($ruta in @("C:\tools\apache24","$env:APPDATA\Apache24","C:\Apache24")) {
-            if (Test-Path $ruta) { $tempDir = $ruta; break }
+        if ($origen -eq "1") {
+            if (-not (Test-Path $chocoExe)) {
+                Set-ExecutionPolicy Bypass -Scope Process -Force
+                Invoke-Expression ((New-Object System.Net.WebClient).DownloadString(
+                    "https://community.chocolatey.org/install.ps1"))
+            }
+            Write-Host "  Descargando Apache via Chocolatey (puede tardar)..." -ForegroundColor Cyan
+            & $chocoExe install apache-httpd -y --force --params "/NoService" --limit-output
+
+            $tempDir = ""
+            foreach ($ruta in @("C:\tools\apache24","$env:APPDATA\Apache24","C:\Apache24")) {
+                if (Test-Path $ruta) { $tempDir = $ruta; break }
+            }
+            if (-not $tempDir) {
+                Write-Host "Error: instalacion Choco fallo." -ForegroundColor Red
+                return
+            }
+            if ($tempDir -ne "C:\Apache24") {
+                if (Test-Path "C:\Apache24") { Remove-Item "C:\Apache24" -Recurse -Force }
+                Move-Item -Path $tempDir -Destination "C:\Apache24" -Force
+            }
+        } else {
+            $rutaZip = Navegar-Descargar-FTP -Servicio "Apache"
+            if (-not $rutaZip) { return }
+            Expand-Archive -Path $rutaZip -DestinationPath "C:\" -Force
         }
-        if (-not $tempDir) {
-            Write-Host "Error: instalacion Choco fallo." -ForegroundColor Red
-            return
-        }
-        if ($tempDir -ne "C:\Apache24") {
-            if (Test-Path "C:\Apache24") { Remove-Item "C:\Apache24" -Recurse -Force }
-            Move-Item -Path $tempDir -Destination "C:\Apache24" -Force
-        }
-    } else {
-        $rutaZip = Navegar-Descargar-FTP -Servicio "Apache"
-        if (-not $rutaZip) { return }
-        Expand-Archive -Path $rutaZip -DestinationPath "C:\" -Force
+    }
+
+    if (-not (Test-Path "$apacheDir\bin\httpd.exe")) {
+        Write-Host "  [!] httpd.exe no encontrado en $apacheDir\bin\" -ForegroundColor Red
+        return
     }
 
     # Generar certificado SSL
@@ -302,7 +327,7 @@ SSLSessionCacheTimeout 300
     if (-not $vcDll) {
         Write-Host "  [!] Falta VCRUNTIME140.dll. Instalando VC++ Redistributable..." -ForegroundColor Yellow
         $vcUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
-        $vcExe = "$env:TEMPc_redist.x64.exe"
+        $vcExe = "$env:TEMP\vc_redist.x64.exe"
         try {
             Invoke-WebRequest -Uri $vcUrl -OutFile $vcExe -UseBasicParsing -ErrorAction Stop
             Start-Process -FilePath $vcExe -ArgumentList "/install /quiet /norestart" -Wait
