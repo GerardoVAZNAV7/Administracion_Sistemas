@@ -58,9 +58,10 @@ function Limpiar-Apache {
         Stop-Service  -Name $svc -Force -ErrorAction SilentlyContinue
         sc.exe delete $svc | Out-Null
     }
+    # NO borrar AppData\Apache24 - Chocolatey instala ahi y necesita esos archivos
+    # Solo borrar C:\Apache24 para forzar una copia limpia
     Remove-Item -Path "C:\Apache24" -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "C:\tools\apache24" -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -Path "$env:APPDATA\Apache24" -Recurse -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
 }
 
@@ -133,59 +134,55 @@ function Instalar-Apache {
             "https://community.chocolatey.org/install.ps1"))
     }
 
-    # Instalar Apache via Chocolatey
-    # SIN --force para usar cache local si ya fue descargado antes
-    Write-Host "  Instalando Apache via Chocolatey (sin --force para usar cache)..." -ForegroundColor Cyan
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    & $chocoExe install apache-httpd -y --params "/NoService" --limit-output
 
-    # Chocolatey puede instalar en AppData o tools segun la version
-    # Buscar donde quedo y mover a C:\Apache24
+    # PASO 1: Buscar httpd.exe donde Chocolatey lo pudo haber dejado
     $tempDir = ""
-    $posibles = @(
-        "C:\tools\apache24",
+    $rutasBusqueda = @(
         "$env:APPDATA\Apache24",
-        "$env:LOCALAPPDATA\Apache24",
+        "C:\Apache24",
+        "C:\tools\apache24",
         "C:\ProgramData\chocolatey\lib\apache-httpd\tools\Apache24"
     )
-    foreach ($ruta in $posibles) {
+    foreach ($ruta in $rutasBusqueda) {
         if (Test-Path "$ruta\bin\httpd.exe") { $tempDir = $ruta; break }
     }
-    # Busqueda extra en chocolatey lib
+
+    # PASO 2: Si no se encuentra, instalar via Chocolatey con --force
     if (-not $tempDir) {
-        $found = Get-ChildItem "C:\ProgramData\chocolatey\lib" -Filter "Apache24" -Directory -Recurse -ErrorAction SilentlyContinue |
-                 Select-Object -First 1
-        if ($found -and (Test-Path "$($found.FullName)\bin\httpd.exe")) {
-            $tempDir = $found.FullName
+        Write-Host "  Apache no encontrado. Instalando via Chocolatey..." -ForegroundColor Cyan
+        & $chocoExe install apache-httpd -y --force --params "/NoService" --limit-output
+
+        # Buscar de nuevo tras la instalacion
+        foreach ($ruta in $rutasBusqueda) {
+            if (Test-Path "$ruta\bin\httpd.exe") { $tempDir = $ruta; break }
         }
-    }
-    if (-not $tempDir -and (Test-Path "C:\Apache24\bin\httpd.exe")) {
-        $tempDir = "C:\Apache24"
+    } else {
+        Write-Host "  Apache encontrado en: $tempDir" -ForegroundColor Green
     }
 
+    # PASO 3: Busqueda exhaustiva si sigue sin encontrarse
     if (-not $tempDir) {
-        Write-Host "  [!] No se encontro httpd.exe. Buscando en todo C:\..." -ForegroundColor Yellow
-        $found = Get-ChildItem "C:\" -Filter "httpd.exe" -Recurse -ErrorAction SilentlyContinue |
+        Write-Host "  Buscando httpd.exe en todo el sistema..." -ForegroundColor Yellow
+        $found = Get-ChildItem "C:\" -Filter "httpd.exe" -Recurse -Depth 6 -ErrorAction SilentlyContinue |
                  Select-Object -First 1
         if ($found) {
             $tempDir = $found.DirectoryName -replace "\\bin$",""
-            Write-Host "  [OK] Encontrado en: $tempDir" -ForegroundColor Green
+            Write-Host "  Encontrado en: $tempDir" -ForegroundColor DarkGray
         }
     }
 
     if (-not $tempDir) {
-        Write-Host "  [!] Instalacion fallo. httpd.exe no encontrado." -ForegroundColor Red
+        Write-Host "  [!] httpd.exe no encontrado. Instalacion fallo." -ForegroundColor Red
         return
     }
 
-    # Mover a C:\Apache24 si no esta ahi ya
     if ($tempDir -ne "C:\Apache24") {
-        Write-Host "  Moviendo de $tempDir a C:\Apache24..." -ForegroundColor DarkGray
         if (Test-Path "C:\Apache24") { Remove-Item "C:\Apache24" -Recurse -Force }
         Move-Item -Path $tempDir -Destination "C:\Apache24" -Force
     }
 
-    Write-Host "  [OK] Apache en C:\Apache24" -ForegroundColor Green
+    Write-Host "  [OK] Apache listo en C:\Apache24" -ForegroundColor Green
 
     # Verificar VCRUNTIME140.dll
     if (-not (Test-Path "C:\Windows\System32\VCRUNTIME140.dll")) {
