@@ -161,21 +161,17 @@ function Instalar-Apache {
     $resSSL = Read-Host "Desea activar SSL? [S/N]"
     $isSSL  = ($resSSL -match '^[sS]$')
 
-    $confPath  = "$apacheDir\conf\httpd.conf"
-    $confArray = Get-Content $confPath | Where-Object {
-        $_ -notmatch '^\s*Listen ' -and $_ -notmatch '^\s*ServerName '
-    }
-    $conf = $confArray -join "`r`n"
-    # FIX: Chocolatey instala Apache en AppData\Roaming con rutas hardcodeadas.
-    # Hay que reemplazar TODAS las referencias a la ruta original, no solo SRVROOT.
-    $conf = $conf -replace 'Define SRVROOT ".*"',  'Define SRVROOT "C:/Apache24"'
-    $conf = $conf -replace 'ServerRoot ".*"',       'ServerRoot "C:/Apache24"'
-    $conf = $conf -replace 'DocumentRoot ".*"',     'DocumentRoot "C:/Apache24/htdocs"'
-    $conf = $conf -replace '<Directory ".*htdocs">', '<Directory "C:/Apache24/htdocs">'
-    $conf = $conf -replace '(?m)^\s*Include conf/extra/httpd-ahssl\.conf.*$',
-                            '#Include conf/extra/httpd-ahssl.conf'
-    $conf = $conf -replace '(?m)^\s*Include conf/extra/httpd-ssl\.conf.*$',
-                            '#Include conf/extra/httpd-ssl.conf'
+    # ===========================================================
+    # ESTRATEGIA: escribir httpd.conf DESDE CERO
+    # Razon: Chocolatey hardcodea la ruta del usuario en ServerRoot,
+    # LoadModule, DocumentRoot, etc.  Parchear con regex es fragil.
+    # Escribimos solo lo minimo necesario y funciona en cualquier maquina.
+    # ===========================================================
+    $confPath = "$apacheDir\conf\httpd.conf"
+
+    # Detectar cuales modulos .so existen realmente en la instalacion
+    $modDir = "$apacheDir\modules"
+    function Apache-Mod { param($n) if (Test-Path "$modDir\$n") { "LoadModule $($n -replace 'mod_','') $n" } }
 
     if ($isSSL) {
         Write-Host "Generando certificado SSL para www.reprobados.com..."
@@ -187,18 +183,41 @@ function Instalar-Apache {
             -days 365 -subj "/CN=www.reprobados.com"
         Set-Location "C:\"
 
-        $conf = $conf -replace "(?m)^#?\s*LoadModule ssl_module.*$",
-                               "LoadModule ssl_module modules/mod_ssl.so"
-        $conf = $conf -replace "(?m)^#?\s*LoadModule socache_shmcb_module.*$",
-                               "LoadModule socache_shmcb_module modules/mod_socache_shmcb.so"
-        $conf = $conf -replace "(?m)^#?\s*LoadModule rewrite_module.*$",
-                               "LoadModule rewrite_module modules/mod_rewrite.so"
-        $conf = $conf -replace "(?m)^#?\s*LoadModule headers_module.*$",
-                               "LoadModule headers_module modules/mod_headers.so"
+        $httpConf = @"
+ServerRoot "C:/Apache24"
+Listen 80
+Listen ${Puerto}
+ServerName localhost:80
 
-        $conf = "Listen 80`r`nListen ${Puerto}`r`nServerName localhost:80`r`n" + $conf
-        $conf += "`r`nInclude conf/extra/httpd-ssl.conf"
-        $conf += @"
+LoadModule mpm_winnt_module modules/mod_mpm_winnt.so
+LoadModule authn_core_module modules/mod_authn_core.so
+LoadModule authz_core_module modules/mod_authz_core.so
+LoadModule mime_module modules/mod_mime.so
+LoadModule log_config_module modules/mod_log_config.so
+LoadModule ssl_module modules/mod_ssl.so
+LoadModule socache_shmcb_module modules/mod_socache_shmcb.so
+LoadModule rewrite_module modules/mod_rewrite.so
+LoadModule headers_module modules/mod_headers.so
+LoadModule unixd_module modules/mod_unixd.so
+
+TypesConfig conf/mime.types
+DocumentRoot "C:/Apache24/htdocs"
+<Directory "C:/Apache24/htdocs">
+    Options Indexes FollowSymLinks
+    AllowOverride None
+    Require all granted
+</Directory>
+
+ErrorLog "logs/error.log"
+LogLevel warn
+LogFormat "%h %l %u %t "%r" %>s %b" common
+CustomLog "logs/access.log" common
+
+SSLCipherSuite HIGH:MEDIUM:!MD5:!RC4:!3DES
+SSLProtocol all -SSLv3
+SSLPassPhraseDialog builtin
+SSLSessionCache "shmcb:C:/Apache24/logs/ssl_scache(512000)"
+SSLSessionCacheTimeout 300
 
 <VirtualHost *:80>
     ServerName www.reprobados.com
@@ -206,31 +225,20 @@ function Instalar-Apache {
     RewriteCond %{HTTPS} off
     RewriteRule ^(.*)$ https://%{HTTP_HOST}:${Puerto}%{REQUEST_URI} [L,R=301]
 </VirtualHost>
-"@
-        $sslConf = @"
-Listen ${Puerto}
-SSLCipherSuite HIGH:MEDIUM:!MD5:!RC4:!3DES
-SSLProxyCipherSuite HIGH:MEDIUM:!MD5:!RC4:!3DES
-SSLHonorCipherOrder on
-SSLProtocol all -SSLv3
-SSLProxyProtocol all -SSLv3
-SSLPassPhraseDialog builtin
-SSLSessionCache "shmcb:c:/Apache24/logs/ssl_scache(512000)"
-SSLSessionCacheTimeout 300
 
 <VirtualHost _default_:${Puerto}>
-    DocumentRoot "c:/Apache24/htdocs"
+    DocumentRoot "C:/Apache24/htdocs"
     ServerName www.reprobados.com:${Puerto}
-    ServerAdmin admin@reprobados.com
-    ErrorLog    "c:/Apache24/logs/error.log"
-    TransferLog "c:/Apache24/logs/access.log"
+    ErrorLog    "C:/Apache24/logs/error.log"
+    TransferLog "C:/Apache24/logs/access.log"
     SSLEngine on
-    SSLCertificateFile    "c:/Apache24/conf/server.crt"
-    SSLCertificateKeyFile "c:/Apache24/conf/server.key"
+    SSLCertificateFile    "C:/Apache24/conf/server.crt"
+    SSLCertificateKeyFile "C:/Apache24/conf/server.key"
     Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
 </VirtualHost>
 "@
-        Set-Content -Path "$apacheDir\conf\extra\httpd-ssl.conf" -Value $sslConf -Force
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($confPath, $httpConf, $utf8NoBom)
 
         Escribir-Resumen "[OK] Apache: HTTPS puerto $Puerto (HTTP 80 redirige)."
         $protocolo = "HTTPS (Seguro)"
@@ -241,9 +249,33 @@ SSLSessionCacheTimeout 300
         New-NetFirewallRule -DisplayName "Apache HTTPS $Puerto" -Direction Inbound `
             -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
     } else {
-        $conf = "Listen ${Puerto}`r`nServerName localhost:${Puerto}`r`n" + $conf
-        $conf = $conf -replace '(?m)^\s*LoadModule ssl_module.*$',
-                               '#LoadModule ssl_module modules/mod_ssl.so'
+        $httpConf = @"
+ServerRoot "C:/Apache24"
+Listen ${Puerto}
+ServerName localhost:${Puerto}
+
+LoadModule mpm_winnt_module modules/mod_mpm_winnt.so
+LoadModule authn_core_module modules/mod_authn_core.so
+LoadModule authz_core_module modules/mod_authz_core.so
+LoadModule mime_module modules/mod_mime.so
+LoadModule log_config_module modules/mod_log_config.so
+LoadModule unixd_module modules/mod_unixd.so
+
+TypesConfig conf/mime.types
+DocumentRoot "C:/Apache24/htdocs"
+<Directory "C:/Apache24/htdocs">
+    Options Indexes FollowSymLinks
+    AllowOverride None
+    Require all granted
+</Directory>
+
+ErrorLog "logs/error.log"
+LogLevel warn
+LogFormat "%h %l %u %t "%r" %>s %b" common
+CustomLog "logs/access.log" common
+"@
+        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($confPath, $httpConf, $utf8NoBom)
 
         Escribir-Resumen "[OK] Apache: HTTP puro puerto $Puerto."
         $protocolo = "HTTP (Inseguro)"
@@ -252,8 +284,6 @@ SSLSessionCacheTimeout 300
         New-NetFirewallRule -DisplayName "Apache HTTP $Puerto" -Direction Inbound `
             -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
     }
-
-    $conf | Set-Content $confPath
 
     $versionFull  = (& "$apacheDir\bin\httpd.exe" -v | Select-String "Server version")
     $versionClean = ($versionFull -split "/")[1] -replace " .*", ""
@@ -378,7 +408,13 @@ function Instalar-Nginx {
             -out    "$nginxDir\conf\server.crt" `
             -days 365 -subj "/CN=www.reprobados.com" 2>$null
 
-        $nginxConf = @"
+        # FIX: si el puerto 80 ya esta ocupado (por IIS u otro proceso),
+        # Nginx no puede abrirlo y muere con error 10013 (permission/address in use).
+        # Detectamos si 80 esta libre antes de agregar el bloque de redireccion.
+        $puerto80Libre = -not (netstat -ano 2>$null | Select-String ":80 ")
+
+        if ($puerto80Libre) {
+            $nginxConf = @"
 worker_processes 1;
 events { worker_connections 1024; }
 http {
@@ -403,12 +439,35 @@ http {
     }
 }
 "@
-        Escribir-Resumen "[OK] Nginx: HTTPS puerto $Puerto (HTTP 80 redirige)."
+            New-NetFirewallRule -DisplayName "Nginx HTTP 80" -Direction Inbound `
+                -LocalPort 80 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+            Escribir-Resumen "[OK] Nginx: HTTPS puerto $Puerto (HTTP 80 redirige)."
+        } else {
+            Write-Host "  [!] Puerto 80 ocupado por otro servicio. Nginx usara solo HTTPS en $Puerto." -ForegroundColor Yellow
+            $nginxConf = @"
+worker_processes 1;
+events { worker_connections 1024; }
+http {
+    include      mime.types;
+    default_type application/octet-stream;
+    sendfile on;
+    keepalive_timeout 65;
+
+    server {
+        listen ${Puerto} ssl;
+        server_name www.reprobados.com;
+        ssl_certificate     C:/nginx/conf/server.crt;
+        ssl_certificate_key C:/nginx/conf/server.key;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        location / { root html; index index.html index.htm; }
+    }
+}
+"@
+            Escribir-Resumen "[OK] Nginx: HTTPS solo en puerto $Puerto (80 ocupado por otro servicio)."
+        }
         $protocolo = "HTTPS (Seguro)"
         $bgColor   = "#115c2a"
 
-        New-NetFirewallRule -DisplayName "Nginx HTTP 80" -Direction Inbound `
-            -LocalPort 80 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
         New-NetFirewallRule -DisplayName "Nginx HTTPS $Puerto" -Direction Inbound `
             -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
     } else {
