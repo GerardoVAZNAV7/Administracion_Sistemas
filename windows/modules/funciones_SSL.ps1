@@ -118,119 +118,114 @@ function Esperar-Puerto {
 # No toca Nginx ni IIS aunque esten corriendo.
 # =============================================================================
 function Instalar-Apache {
-    Write-Host "`n--- INSTALANDO APACHE (puerto fijo 443 + SSL) ---" -ForegroundColor Cyan
+    Write-Host "`n--- INSTALANDO APACHE (puerto 443 SSL) ---" -ForegroundColor Cyan
     Limpiar-Apache
 
     $apacheDir = "C:\Apache24"
     $chocoExe  = "C:\ProgramData\chocolatey\bin\choco.exe"
 
-    # Si Apache ya esta en C:\Apache24 de un intento anterior, preguntar si reutilizar
-    if (Test-Path "$apacheDir\bin\httpd.exe") {
-        Write-Host "  Apache ya esta en $apacheDir" -ForegroundColor Green
-        $reusar = Read-Host "  Reutilizar instalacion existente? [S/N]"
-        if ($reusar -notmatch '^[nN]$') {
-            Write-Host "  [OK] Usando Apache existente." -ForegroundColor Green
-            # Saltar descarga, ir directo a configurar
-        } else {
-            Limpiar-Apache
-            # Continuar con descarga
-            goto_descarga:
-            Write-Host "1) Descargar de la Web (Chocolatey)"
-            Write-Host "2) Descargar del FTP (Privado)"
-            $origen = Read-Host "Selecciona el origen"
-        }
-    }
-
-    if (-not (Test-Path "$apacheDir\bin\httpd.exe")) {
-        Write-Host "1) Descargar de la Web (Chocolatey)"
-        Write-Host "2) Descargar del FTP (Privado)"
-        $origen = Read-Host "Selecciona el origen"
-
+    # Instalar Chocolatey si no existe
+    if (-not (Test-Path $chocoExe)) {
+        Write-Host "  Instalando Chocolatey..." -ForegroundColor Cyan
+        Set-ExecutionPolicy Bypass -Scope Process -Force
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString(
+            "https://community.chocolatey.org/install.ps1"))
+    }
 
-        if ($origen -eq "1") {
-            if (-not (Test-Path $chocoExe)) {
-                Set-ExecutionPolicy Bypass -Scope Process -Force
-                Invoke-Expression ((New-Object System.Net.WebClient).DownloadString(
-                    "https://community.chocolatey.org/install.ps1"))
-            }
-            Write-Host "  Descargando Apache via Chocolatey (puede tardar)..." -ForegroundColor Cyan
-            & $chocoExe install apache-httpd -y --force --params "/NoService" --limit-output
+    # Instalar Apache via Chocolatey
+    # SIN --force para usar cache local si ya fue descargado antes
+    Write-Host "  Instalando Apache via Chocolatey (sin --force para usar cache)..." -ForegroundColor Cyan
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    & $chocoExe install apache-httpd -y --params "/NoService" --limit-output
 
-            $tempDir = ""
-            foreach ($ruta in @("C:\tools\apache24","$env:APPDATA\Apache24","C:\Apache24")) {
-                if (Test-Path $ruta) { $tempDir = $ruta; break }
-            }
-            if (-not $tempDir) {
-                Write-Host "Error: instalacion Choco fallo." -ForegroundColor Red
-                return
-            }
-            if ($tempDir -ne "C:\Apache24") {
-                if (Test-Path "C:\Apache24") { Remove-Item "C:\Apache24" -Recurse -Force }
-                Move-Item -Path $tempDir -Destination "C:\Apache24" -Force
-            }
-        } else {
-            $rutaZip = Navegar-Descargar-FTP -Servicio "Apache"
-            if (-not $rutaZip) { return }
-            Expand-Archive -Path $rutaZip -DestinationPath "C:\" -Force
+    # Chocolatey puede instalar en AppData o tools segun la version
+    # Buscar donde quedo y mover a C:\Apache24
+    $tempDir = ""
+    $posibles = @(
+        "C:\tools\apache24",
+        "$env:APPDATA\Apache24",
+        "$env:LOCALAPPDATA\Apache24",
+        "C:\ProgramData\chocolatey\lib\apache-httpd\tools\Apache24"
+    )
+    foreach ($ruta in $posibles) {
+        if (Test-Path "$ruta\bin\httpd.exe") { $tempDir = $ruta; break }
+    }
+    # Busqueda extra en chocolatey lib
+    if (-not $tempDir) {
+        $found = Get-ChildItem "C:\ProgramData\chocolatey\lib" -Filter "Apache24" -Directory -Recurse -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+        if ($found -and (Test-Path "$($found.FullName)\bin\httpd.exe")) {
+            $tempDir = $found.FullName
+        }
+    }
+    if (-not $tempDir -and (Test-Path "C:\Apache24\bin\httpd.exe")) {
+        $tempDir = "C:\Apache24"
+    }
+
+    if (-not $tempDir) {
+        Write-Host "  [!] No se encontro httpd.exe. Buscando en todo C:\..." -ForegroundColor Yellow
+        $found = Get-ChildItem "C:\" -Filter "httpd.exe" -Recurse -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+        if ($found) {
+            $tempDir = $found.DirectoryName -replace "\\bin$",""
+            Write-Host "  [OK] Encontrado en: $tempDir" -ForegroundColor Green
         }
     }
 
-    if (-not (Test-Path "$apacheDir\bin\httpd.exe")) {
-        Write-Host "  [!] httpd.exe no encontrado en $apacheDir\bin\" -ForegroundColor Red
+    if (-not $tempDir) {
+        Write-Host "  [!] Instalacion fallo. httpd.exe no encontrado." -ForegroundColor Red
         return
     }
 
+    # Mover a C:\Apache24 si no esta ahi ya
+    if ($tempDir -ne "C:\Apache24") {
+        Write-Host "  Moviendo de $tempDir a C:\Apache24..." -ForegroundColor DarkGray
+        if (Test-Path "C:\Apache24") { Remove-Item "C:\Apache24" -Recurse -Force }
+        Move-Item -Path $tempDir -Destination "C:\Apache24" -Force
+    }
+
+    Write-Host "  [OK] Apache en C:\Apache24" -ForegroundColor Green
+
+    # Verificar VCRUNTIME140.dll
+    if (-not (Test-Path "C:\Windows\System32\VCRUNTIME140.dll")) {
+        Write-Host "  Instalando VC++ Redistributable (requerido por Apache)..." -ForegroundColor Yellow
+        & $chocoExe install vcredist140 -y --limit-output
+    }
+
     # Generar certificado SSL
-    Write-Host "Generando certificado SSL para www.reprobados.com..." -ForegroundColor Cyan
-    $env:OPENSSL_CONF = "$apacheDir\conf\openssl.cnf"
-    Set-Location "$apacheDir\bin"
+    Write-Host "  Generando certificado SSL para www.reprobados.com..." -ForegroundColor Cyan
+    $env:OPENSSL_CONF = "C:\Apache24\conf\openssl.cnf"
+    Set-Location "C:\Apache24\bin"
     .\openssl.exe req -x509 -nodes -newkey rsa:2048 `
-        -keyout "$apacheDir\conf\server.key" `
-        -out    "$apacheDir\conf\server.crt" `
+        -keyout "C:\Apache24\conf\server.key" `
+        -out    "C:\Apache24\conf\server.crt" `
         -days 365 -subj "/CN=www.reprobados.com"
     Set-Location "C:\"
 
-    # =========================================================
-    # DETECTAR MODULOS REALES que existen en esta instalacion
-    # Cada version de Apache puede tener nombres distintos.
-    # Leemos el httpd.conf ORIGINAL para obtener los LoadModule
-    # que el propio instalador sabe que existen, y solo cambiamos
-    # las rutas y agregamos los modulos SSL que necesitamos.
-    # =========================================================
-    $confPath    = "$apacheDir\conf\httpd.conf"
+    # Leer LoadModules del httpd.conf original (el instalador sabe cuales existen)
+    $confPath     = "C:\Apache24\conf\httpd.conf"
     $confOriginal = Get-Content $confPath -Raw
-
     Write-Host "  Leyendo modulos del httpd.conf original..." -ForegroundColor DarkGray
 
-    # Extraer todas las lineas LoadModule del original (las que NO estan comentadas)
-    $loadMods = ($confOriginal -split "`n") | Where-Object {
-        $_ -match "^\s*LoadModule\s"
-    }
+    $loadMods = ($confOriginal -split "`n") | Where-Object { $_ -match "^\s*LoadModule\s" }
 
-    # Modulos SSL extra que necesitamos agregar si no estan ya
-    $modosRequeridos = @(
-        "mod_ssl.so",
-        "mod_socache_shmcb.so",
-        "mod_rewrite.so",
-        "mod_headers.so"
-    )
-    foreach ($mod in $modosRequeridos) {
-        $yaEsta = $loadMods | Where-Object { $_ -match $mod }
-        if (-not $yaEsta) {
-            $nombre = $mod -replace "mod_","" -replace "\.so",""
-            $linea  = "LoadModule ${nombre}_module modules/$mod"
-            if (Test-Path "$apacheDir\modules\$mod") {
+    # Agregar modulos SSL si no estan
+    foreach ($mod in @("mod_ssl.so","mod_socache_shmcb.so","mod_rewrite.so","mod_headers.so")) {
+        if (-not ($loadMods | Where-Object { $_ -match $mod })) {
+            if (Test-Path "C:\Apache24\modules\$mod") {
+                $nombre = $mod -replace "mod_","" -replace "\.so",""
+                $linea  = "LoadModule ${nombre}_module modules/$mod"
                 $loadMods += $linea
-                Write-Host "  [+] Agregado: $linea" -ForegroundColor DarkGray
+                Write-Host "  [+] $linea" -ForegroundColor DarkGray
             }
         }
     }
 
-    $loadModsStr = $loadMods -join "`r`n"
+    $loadModsStr = ($loadMods | ForEach-Object { $_.TrimEnd() }) -join "`r`n"
 
-    # Construir el httpd.conf final con rutas correctas
-    $conf = @"
+    # Escribir httpd.conf limpio desde cero
+    $httpconf = @"
 ServerRoot "C:/Apache24"
 Listen 80
 Listen 443
@@ -276,12 +271,12 @@ SSLSessionCacheTimeout 300
 "@
 
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($confPath, $conf, $utf8NoBom)
+    [System.IO.File]::WriteAllText($confPath, $httpconf, $utf8NoBom)
     Write-Host "  [OK] httpd.conf escrito." -ForegroundColor DarkGray
 
-    # Validar antes de lanzar
+    # Validar
     Write-Host "  Validando httpd.conf..." -ForegroundColor DarkGray
-    $testOut = & "$apacheDir\bin\httpd.exe" -t 2>&1
+    $testOut = & "C:\Apache24\bin\httpd.exe" -t 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [!] Error en httpd.conf:" -ForegroundColor Red
         $testOut | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
@@ -290,83 +285,57 @@ SSLSessionCacheTimeout 300
     Write-Host "  [OK] httpd.conf valido." -ForegroundColor Green
 
     # index.html
-    $html = @"
-<html>
-<body style='font-family:Arial;text-align:center;background-color:#27ae60;color:white;padding-top:50px;'>
-  <div style='background:rgba(0,0,0,0.5);display:inline-block;padding:40px;border-radius:20px;border:3px solid white;'>
-    <h1>SERVIDOR WEB: APACHE</h1>
-    <hr style='width:80%;margin:20px auto;'>
-    <p><b>Protocolo:</b> HTTPS (Seguro)</p>
-    <p><b>Puerto:</b> 443</p>
-    <p>www.reprobados.com</p>
-  </div>
-</body>
-</html>
-"@
-    Set-Content -Path "$apacheDir\htdocs\index.html" -Value $html -Force
+    @"
+<html><body style='font-family:Arial;text-align:center;background:#27ae60;color:white;padding-top:50px;'>
+<div style='background:rgba(0,0,0,0.5);display:inline-block;padding:40px;border-radius:20px;border:3px solid white;'>
+<h1>SERVIDOR WEB: APACHE</h1><hr style='width:80%;margin:20px auto;'>
+<p><b>Protocolo:</b> HTTPS (Seguro)</p><p><b>Puerto:</b> 443</p>
+<p>www.reprobados.com</p></div></body></html>
+"@ | Set-Content "C:\Apache24\htdocs\index.html" -Force
 
     # Firewall
-    New-NetFirewallRule -DisplayName "Apache HTTP 80"   -Direction Inbound `
-        -LocalPort 80  -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
-    New-NetFirewallRule -DisplayName "Apache HTTPS 443" -Direction Inbound `
-        -LocalPort 443 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+    New-NetFirewallRule -DisplayName "Apache HTTP 80"   -Direction Inbound -LocalPort 80  -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+    New-NetFirewallRule -DisplayName "Apache HTTPS 443" -Direction Inbound -LocalPort 443 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+
+    # Verificar que 443 este libre
+    if (netstat -ano 2>$null | Select-String ":443 ") {
+        Write-Host "  [!] Puerto 443 ocupado. Liberando..." -ForegroundColor Yellow
+        # Detener IIS en 443 si lo tiene
+        Import-Module WebAdministration -ErrorAction SilentlyContinue
+        Get-Website -ErrorAction SilentlyContinue | Where-Object {
+            $_.Bindings.Collection | Where-Object { $_.bindingInformation -match ":443:" }
+        } | ForEach-Object { Stop-Website -Name $_.Name -ErrorAction SilentlyContinue }
+        Start-Sleep -Seconds 2
+    }
 
     # Lanzar
-    # Verificar si el puerto 443 ya esta ocupado (IIS u otro)
-    $p443 = netstat -ano 2>$null | Select-String ":443 "
-    if ($p443) {
-        Write-Host "  [!] PUERTO 443 YA OCUPADO. Mostrando quien lo usa:" -ForegroundColor Red
-        $p443 | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
-        Write-Host "  Sugerencia: instala IIS primero en otro puerto (ej. 8443)" -ForegroundColor Yellow
-        Write-Host "  o detente en IIS y ejecuta Apache de nuevo." -ForegroundColor Yellow
-        return
-    }
-
-    # Verificar VCRUNTIME140.dll (Apache lo necesita para arrancar)
-    $vcDll = Get-ChildItem "C:\Windows\System32\VCRUNTIME140.dll" -ErrorAction SilentlyContinue
-    if (-not $vcDll) {
-        Write-Host "  [!] Falta VCRUNTIME140.dll. Instalando VC++ Redistributable..." -ForegroundColor Yellow
-        $vcUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
-        $vcExe = "$env:TEMP\vc_redist.x64.exe"
-        try {
-            Invoke-WebRequest -Uri $vcUrl -OutFile $vcExe -UseBasicParsing -ErrorAction Stop
-            Start-Process -FilePath $vcExe -ArgumentList "/install /quiet /norestart" -Wait
-            Remove-Item $vcExe -Force -ErrorAction SilentlyContinue
-            Write-Host "  [OK] VC++ Redistributable instalado." -ForegroundColor Green
-        } catch {
-            Write-Host "  [!] No se pudo instalar VC++. Apache puede fallar." -ForegroundColor Red
-        }
-    }
-
-    Write-Host "Iniciando Apache en puerto 443..." -ForegroundColor Cyan
-    $proc = Start-Process -FilePath "$apacheDir\bin\httpd.exe" -WindowStyle Hidden -PassThru
+    Write-Host "  Iniciando Apache en puerto 443..." -ForegroundColor Cyan
+    $proc = Start-Process -FilePath "C:\Apache24\bin\httpd.exe" -WindowStyle Hidden -PassThru
     Start-Sleep -Seconds 3
 
     if ($proc.HasExited) {
         Write-Host "  [!] Apache termino de inmediato." -ForegroundColor Red
-        Write-Host "  --- error.log ---" -ForegroundColor Yellow
-        if (Test-Path "$apacheDir\logs\error.log") {
-            Get-Content "$apacheDir\logs\error.log" -Tail 25 |
+        Write-Host "  --- Salida directa httpd.exe ---" -ForegroundColor Yellow
+        & "C:\Apache24\bin\httpd.exe" 2>&1 | Select-Object -First 15 |
+            ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        if (Test-Path "C:\Apache24\logs\error.log") {
+            Write-Host "  --- error.log ---" -ForegroundColor Yellow
+            Get-Content "C:\Apache24\logs\error.log" -Tail 20 |
                 ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
-        } else {
-            Write-Host "      (error.log no existe - falla antes de iniciar)" -ForegroundColor Red
-            Write-Host "      Causa probable: VCRUNTIME140.dll faltante o puerto 443 ocupado" -ForegroundColor Red
         }
-        # Intentar lanzar en modo consola para ver el error directo
-        Write-Host "  --- Salida directa de httpd.exe ---" -ForegroundColor Yellow
-        $directOut = & "$apacheDir\bin\httpd.exe" 2>&1
-        $directOut | Select-Object -First 10 | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
         return
     }
 
     $ok = Esperar-Puerto -Puerto 443 -intentos 15
     if ($ok) {
-        Write-Host "[OK] Apache corriendo en https://192.168.56.102" -ForegroundColor Green
+        Write-Host "  [OK] Apache corriendo en https://192.168.56.102" -ForegroundColor Green
         Escribir-Resumen "[OK] Apache: HTTPS puerto 443 (HTTP 80 redirige)."
     } else {
-        Write-Host "[!] Apache inicio pero el puerto 443 no responde." -ForegroundColor Red
-        Get-Content "$apacheDir\logs\error.log" -Tail 20 -ErrorAction SilentlyContinue |
-            ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        Write-Host "  [!] Puerto 443 no responde." -ForegroundColor Red
+        if (Test-Path "C:\Apache24\logs\error.log") {
+            Get-Content "C:\Apache24\logs\error.log" -Tail 20 |
+                ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        }
     }
 }
 
