@@ -118,28 +118,26 @@ function Esperar-Puerto {
 # No toca Nginx ni IIS aunque esten corriendo.
 # =============================================================================
 function Instalar-Apache {
-    Write-Host "`n--- INSTALANDO APACHE ---" -ForegroundColor Cyan
+    Write-Host "`n--- INSTALANDO APACHE (puerto fijo 443 + SSL) ---" -ForegroundColor Cyan
     Limpiar-Apache
 
-    $Puerto = 443
-    Write-Host "  [OK] Apache fijo en puerto: 443" -ForegroundColor DarkGray
-    Write-Host "  [OK] Puerto elegido: $Puerto" -ForegroundColor DarkGray
+    $Puerto    = 443
+    $apacheDir = "C:\Apache24"
+    $chocoExe  = "C:\ProgramData\chocolatey\bin\choco.exe"
 
     Write-Host "1) Descargar de la Web (Chocolatey)"
     Write-Host "2) Descargar del FTP (Privado)"
     $origen = Read-Host "Selecciona el origen"
 
-    $apacheDir = "C:\Apache24"
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $chocoExe  = "C:\ProgramData\chocolatey\bin\choco.exe"
 
     if ($origen -eq "1") {
         if (-not (Test-Path $chocoExe)) {
             Set-ExecutionPolicy Bypass -Scope Process -Force
             Invoke-Expression ((New-Object System.Net.WebClient).DownloadString(
-                'https://community.chocolatey.org/install.ps1'))
+                "https://community.chocolatey.org/install.ps1"))
         }
-        & $chocoExe install apache-httpd -y --force --params '"/NoService"' --limit-output
+        & $chocoExe install apache-httpd -y --force --params "/NoService" --limit-output
 
         $tempDir = ""
         foreach ($ruta in @("C:\tools\apache24","$env:APPDATA\Apache24","C:\Apache24")) {
@@ -159,109 +157,98 @@ function Instalar-Apache {
         Expand-Archive -Path $rutaZip -DestinationPath "C:\" -Force
     }
 
-    # Apache siempre usa SSL en puerto 443 (fijo)
-    $isSSL = $true
+    # Generar certificado SSL
+    Write-Host "Generando certificado SSL para www.reprobados.com..." -ForegroundColor Cyan
+    $env:OPENSSL_CONF = "$apacheDir\conf\openssl.cnf"
+    Set-Location "$apacheDir\bin"
+    .\openssl.exe req -x509 -nodes -newkey rsa:2048 `
+        -keyout "$apacheDir\conf\server.key" `
+        -out    "$apacheDir\conf\server.crt" `
+        -days 365 -subj "/CN=www.reprobados.com"
+    Set-Location "C:\"
 
-    # ===========================================================
-    # ESTRATEGIA: escribir httpd.conf DESDE CERO
-    # Razon: Chocolatey hardcodea la ruta del usuario en ServerRoot,
-    # LoadModule, DocumentRoot, etc.  Parchear con regex es fragil.
-    # Escribimos solo lo minimo necesario y funciona en cualquier maquina.
-    # ===========================================================
+    # Escribir httpd.conf desde cero - sin depender del conf de Chocolatey
+    # NOTA: LogFormat usa comilla simple para evitar conflicto con PowerShell here-string
     $confPath = "$apacheDir\conf\httpd.conf"
+    $logFmt   = '%h %l %u %t "%r" %>s %b'
 
-    # Detectar cuales modulos .so existen realmente en la instalacion
-    $modDir = "$apacheDir\modules"
-    function Apache-Mod { param($n) if (Test-Path "$modDir\$n") { "LoadModule $($n -replace 'mod_','') $n" } }
+    $httpConfLines = @(
+        'ServerRoot "C:/Apache24"',
+        'Listen 80',
+        'Listen 443',
+        'ServerName localhost:80',
+        '',
+        'LoadModule mpm_winnt_module      modules/mod_mpm_winnt.so',
+        'LoadModule authn_core_module     modules/mod_authn_core.so',
+        'LoadModule authz_core_module     modules/mod_authz_core.so',
+        'LoadModule mime_module           modules/mod_mime.so',
+        'LoadModule log_config_module     modules/mod_log_config.so',
+        'LoadModule ssl_module            modules/mod_ssl.so',
+        'LoadModule socache_shmcb_module  modules/mod_socache_shmcb.so',
+        'LoadModule rewrite_module        modules/mod_rewrite.so',
+        'LoadModule headers_module        modules/mod_headers.so',
+        '',
+        'TypesConfig conf/mime.types',
+        'DocumentRoot "C:/Apache24/htdocs"',
+        '<Directory "C:/Apache24/htdocs">',
+        '    Options Indexes FollowSymLinks',
+        '    AllowOverride None',
+        '    Require all granted',
+        '</Directory>',
+        '',
+        'ErrorLog "logs/error.log"',
+        'LogLevel warn',
+        "LogFormat `"$logFmt`" common",
+        'CustomLog "logs/access.log" common',
+        '',
+        'SSLCipherSuite HIGH:MEDIUM:!MD5:!RC4:!3DES',
+        'SSLProtocol all -SSLv3',
+        'SSLPassPhraseDialog builtin',
+        'SSLSessionCache "shmcb:C:/Apache24/logs/ssl_scache(512000)"',
+        'SSLSessionCacheTimeout 300',
+        '',
+        '<VirtualHost *:80>',
+        '    ServerName www.reprobados.com',
+        '    RewriteEngine On',
+        '    RewriteCond %{HTTPS} off',
+        '    RewriteRule ^(.*)$ https://%{HTTP_HOST}:443%{REQUEST_URI} [L,R=301]',
+        '</VirtualHost>',
+        '',
+        '<VirtualHost _default_:443>',
+        '    DocumentRoot "C:/Apache24/htdocs"',
+        '    ServerName www.reprobados.com:443',
+        '    ErrorLog    "C:/Apache24/logs/error.log"',
+        '    TransferLog "C:/Apache24/logs/access.log"',
+        '    SSLEngine on',
+        '    SSLCertificateFile    "C:/Apache24/conf/server.crt"',
+        '    SSLCertificateKeyFile "C:/Apache24/conf/server.key"',
+        '    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"',
+        '</VirtualHost>'
+    )
 
-    if ($isSSL) {
-        Write-Host "Generando certificado SSL para www.reprobados.com..."
-        $env:OPENSSL_CONF = "$apacheDir\conf\openssl.cnf"
-        Set-Location "$apacheDir\bin"
-        .\openssl.exe req -x509 -nodes -newkey rsa:2048 `
-            -keyout "$apacheDir\conf\server.key" `
-            -out    "$apacheDir\conf\server.crt" `
-            -days 365 -subj "/CN=www.reprobados.com"
-        Set-Location "C:\"
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllLines($confPath, $httpConfLines, $utf8NoBom)
+    Write-Host "  [OK] httpd.conf escrito." -ForegroundColor DarkGray
 
-        $httpConf = @"
-ServerRoot "C:/Apache24"
-Listen 80
-Listen ${Puerto}
-ServerName localhost:80
-
-LoadModule mpm_winnt_module modules/mod_mpm_winnt.so
-LoadModule authn_core_module modules/mod_authn_core.so
-LoadModule authz_core_module modules/mod_authz_core.so
-LoadModule mime_module modules/mod_mime.so
-LoadModule log_config_module modules/mod_log_config.so
-LoadModule ssl_module modules/mod_ssl.so
-LoadModule socache_shmcb_module modules/mod_socache_shmcb.so
-LoadModule rewrite_module modules/mod_rewrite.so
-LoadModule headers_module modules/mod_headers.so
-
-TypesConfig conf/mime.types
-DocumentRoot "C:/Apache24/htdocs"
-<Directory "C:/Apache24/htdocs">
-    Options Indexes FollowSymLinks
-    AllowOverride None
-    Require all granted
-</Directory>
-
-ErrorLog "logs/error.log"
-LogLevel warn
-LogFormat "%h %l %u %t "%r" %>s %b" common
-CustomLog "logs/access.log" common
-
-SSLCipherSuite HIGH:MEDIUM:!MD5:!RC4:!3DES
-SSLProtocol all -SSLv3
-SSLPassPhraseDialog builtin
-SSLSessionCache "shmcb:C:/Apache24/logs/ssl_scache(512000)"
-SSLSessionCacheTimeout 300
-
-<VirtualHost *:80>
-    ServerName www.reprobados.com
-    RewriteEngine On
-    RewriteCond %{HTTPS} off
-    RewriteRule ^(.*)$ https://%{HTTP_HOST}:${Puerto}%{REQUEST_URI} [L,R=301]
-</VirtualHost>
-
-<VirtualHost _default_:${Puerto}>
-    DocumentRoot "C:/Apache24/htdocs"
-    ServerName www.reprobados.com:${Puerto}
-    ErrorLog    "C:/Apache24/logs/error.log"
-    TransferLog "C:/Apache24/logs/access.log"
-    SSLEngine on
-    SSLCertificateFile    "C:/Apache24/conf/server.crt"
-    SSLCertificateKeyFile "C:/Apache24/conf/server.key"
-    Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains"
-</VirtualHost>
-"@
-        $utf8NoBom = New-Object System.Text.UTF8Encoding $false
-        [System.IO.File]::WriteAllText($confPath, $httpConf, $utf8NoBom)
-
-        Escribir-Resumen "[OK] Apache: HTTPS puerto $Puerto (HTTP 80 redirige)."
-        $protocolo = "HTTPS (Seguro)"
-        $bgColor   = "#27ae60"
-
-        New-NetFirewallRule -DisplayName "Apache HTTP 80" -Direction Inbound `
-            -LocalPort 80 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
-        New-NetFirewallRule -DisplayName "Apache HTTPS $Puerto" -Direction Inbound `
-            -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+    # Validar antes de lanzar
+    Write-Host "  Validando httpd.conf..." -ForegroundColor DarkGray
+    $testOut = & "$apacheDir\bin\httpd.exe" -t 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [!] Error en httpd.conf:" -ForegroundColor Red
+        $testOut | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        return
     }
+    Write-Host "  [OK] httpd.conf valido." -ForegroundColor Green
 
-    $versionFull  = (& "$apacheDir\bin\httpd.exe" -v | Select-String "Server version")
-    $versionClean = ($versionFull -split "/")[1] -replace " .*", ""
-
+    # index.html
     $html = @"
 <html>
-<body style='font-family:Arial;text-align:center;background-color:${bgColor};color:white;padding-top:50px;'>
+<body style='font-family:Arial;text-align:center;background-color:#27ae60;color:white;padding-top:50px;'>
   <div style='background:rgba(0,0,0,0.5);display:inline-block;padding:40px;border-radius:20px;border:3px solid white;'>
     <h1>SERVIDOR WEB: APACHE</h1>
     <hr style='width:80%;margin:20px auto;'>
-    <p><b>Version:</b> $versionClean</p>
-    <p><b>Protocolo:</b> $protocolo</p>
-    <p><b>Puerto:</b> $Puerto</p>
+    <p><b>Protocolo:</b> HTTPS (Seguro)</p>
+    <p><b>Puerto:</b> 443</p>
     <p>Configuracion para www.reprobados.com</p>
   </div>
 </body>
@@ -269,40 +256,31 @@ SSLSessionCacheTimeout 300
 "@
     Set-Content -Path "$apacheDir\htdocs\index.html" -Value $html -Force
 
-    # Validar httpd.conf ANTES de lanzar (igual que nginx -t)
-    # Esto muestra el error exacto en pantalla sin tener que abrir el log
-    Write-Host "  Validando httpd.conf..." -ForegroundColor DarkGray
-    $testResult = & "$apacheDir\bin\httpd.exe" -t 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "  [!] httpd.conf invalido:" -ForegroundColor Red
-        $testResult | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
-        Write-Host ""
-        Write-Host "  Ultimas lineas de error.log:" -ForegroundColor Yellow
-        Get-Content "$apacheDir\logs\error.log" -Tail 15 -ErrorAction SilentlyContinue |
-            ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
-        return
-    }
-    Write-Host "  [OK] httpd.conf valido." -ForegroundColor DarkGray
+    # Firewall
+    New-NetFirewallRule -DisplayName "Apache HTTP 80"   -Direction Inbound `
+        -LocalPort 80  -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+    New-NetFirewallRule -DisplayName "Apache HTTPS 443" -Direction Inbound `
+        -LocalPort 443 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
 
-    Write-Host "Iniciando Apache en puerto $Puerto..." -ForegroundColor Cyan
+    # Lanzar
+    Write-Host "Iniciando Apache en puerto 443..." -ForegroundColor Cyan
     $proc = Start-Process -FilePath "$apacheDir\bin\httpd.exe" -WindowStyle Hidden -PassThru
     Start-Sleep -Seconds 3
 
     if ($proc.HasExited) {
         Write-Host "  [!] Apache termino de inmediato." -ForegroundColor Red
-        Write-Host "  Ultimas lineas de error.log:" -ForegroundColor Yellow
-        Get-Content "$apacheDir\logs\error.log" -Tail 15 -ErrorAction SilentlyContinue |
+        Get-Content "$apacheDir\logs\error.log" -Tail 20 -ErrorAction SilentlyContinue |
             ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
         return
     }
 
-    $ok = Esperar-Puerto -Puerto $Puerto -intentos 15
+    $ok = Esperar-Puerto -Puerto 443 -intentos 15
     if ($ok) {
-        Write-Host "[OK] Apache corriendo. Abre: https://192.168.56.102:$Puerto" -ForegroundColor Green
+        Write-Host "[OK] Apache corriendo en https://192.168.56.102" -ForegroundColor Green
+        Escribir-Resumen "[OK] Apache: HTTPS puerto 443 (HTTP 80 redirige)."
     } else {
-        Write-Host "[!] Apache inicio pero el puerto $Puerto no responde." -ForegroundColor Red
-        Write-Host "  Ultimas lineas de error.log:" -ForegroundColor Yellow
-        Get-Content "$apacheDir\logs\error.log" -Tail 15 -ErrorAction SilentlyContinue |
+        Write-Host "[!] Apache inicio pero el puerto 443 no responde." -ForegroundColor Red
+        Get-Content "$apacheDir\logs\error.log" -Tail 20 -ErrorAction SilentlyContinue |
             ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
     }
 }
