@@ -166,7 +166,12 @@ function Instalar-Apache {
         $_ -notmatch '^\s*Listen ' -and $_ -notmatch '^\s*ServerName '
     }
     $conf = $confArray -join "`r`n"
-    $conf = $conf -replace 'Define SRVROOT ".*"', 'Define SRVROOT "C:/Apache24"'
+    # FIX: Chocolatey instala Apache en AppData\Roaming con rutas hardcodeadas.
+    # Hay que reemplazar TODAS las referencias a la ruta original, no solo SRVROOT.
+    $conf = $conf -replace 'Define SRVROOT ".*"',  'Define SRVROOT "C:/Apache24"'
+    $conf = $conf -replace 'ServerRoot ".*"',       'ServerRoot "C:/Apache24"'
+    $conf = $conf -replace 'DocumentRoot ".*"',     'DocumentRoot "C:/Apache24/htdocs"'
+    $conf = $conf -replace '<Directory ".*htdocs">', '<Directory "C:/Apache24/htdocs">'
     $conf = $conf -replace '(?m)^\s*Include conf/extra/httpd-ahssl\.conf.*$',
                             '#Include conf/extra/httpd-ahssl.conf'
     $conf = $conf -replace '(?m)^\s*Include conf/extra/httpd-ssl\.conf.*$',
@@ -391,8 +396,8 @@ http {
     server {
         listen ${Puerto} ssl;
         server_name www.reprobados.com;
-        ssl_certificate     conf/server.crt;
-        ssl_certificate_key conf/server.key;
+        ssl_certificate     C:/nginx/conf/server.crt;
+        ssl_certificate_key C:/nginx/conf/server.key;
         add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
         location / { root html; index index.html index.htm; }
     }
