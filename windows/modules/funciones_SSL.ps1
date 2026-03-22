@@ -224,12 +224,31 @@ function Instalar-Apache {
 
     $loadModsStr = ($loadMods | ForEach-Object { $_.TrimEnd() }) -join "`r`n"
 
+    # Detectar si el puerto 80 esta libre para agregarlo o no
+    $puerto80Libre = -not (netstat -ano 2>$null | Select-String ":80 ")
+    if ($puerto80Libre) {
+        $listenBlock   = "Listen 80`r`nListen 443"
+        $vhost80Block  = @"
+
+<VirtualHost *:80>
+    ServerName www.reprobados.com
+    RewriteEngine On
+    RewriteCond %{HTTPS} off
+    RewriteRule ^(.*)$ https://%{HTTP_HOST}:443%{REQUEST_URI} [L,R=301]
+</VirtualHost>
+"@
+        Write-Host "  Puerto 80 libre - Apache usara 80 y 443." -ForegroundColor DarkGray
+    } else {
+        $listenBlock   = "Listen 443"
+        $vhost80Block  = ""
+        Write-Host "  Puerto 80 ocupado - Apache usara solo 443." -ForegroundColor Yellow
+    }
+
     # Escribir httpd.conf limpio desde cero
     $httpconf = @"
 ServerRoot "C:/Apache24"
-Listen 80
-Listen 443
-ServerName localhost:80
+$listenBlock
+ServerName localhost:443
 
 $loadModsStr
 
@@ -250,14 +269,7 @@ SSLProtocol all -SSLv3
 SSLPassPhraseDialog builtin
 SSLSessionCache "shmcb:C:/Apache24/logs/ssl_scache(512000)"
 SSLSessionCacheTimeout 300
-
-<VirtualHost *:80>
-    ServerName www.reprobados.com
-    RewriteEngine On
-    RewriteCond %{HTTPS} off
-    RewriteRule ^(.*)$ https://%{HTTP_HOST}:443%{REQUEST_URI} [L,R=301]
-</VirtualHost>
-
+$vhost80Block
 <VirtualHost _default_:443>
     DocumentRoot "C:/Apache24/htdocs"
     ServerName www.reprobados.com:443
