@@ -1,6 +1,7 @@
 # =============================================================================
-# funciones_ssl.ps1  —  Servidores HTTP/HTTPS con puerto elegible
-# Permite levantar múltiples instancias al mismo tiempo en puertos distintos
+# funciones_ssl.ps1  -  Servidores HTTP/HTTPS con puerto elegible
+# Permite levantar multiples instancias al mismo tiempo en puertos distintos
+# SIN caracteres no-ASCII para compatibilidad con PowerShell en Windows Server
 # =============================================================================
 
 $global:resumenInstalaciones = @()
@@ -11,11 +12,9 @@ function Escribir-Resumen {
 }
 
 # =============================================================================
-# VALIDAR PUERTO  (función nueva, reutilizada por las tres instalaciones)
-# =============================================================================
-# Enseñanza: separamos la validación en su propia función para no repetir
-# el mismo bloque de código en Apache, Nginx e IIS (principio DRY).
-# El resultado se devuelve como [int] para que el llamador lo use directo.
+# VALIDAR PUERTO
+# Separamos la validacion en su propia funcion para no repetir el mismo bloque
+# en Apache, Nginx e IIS (principio DRY).
 # =============================================================================
 function Obtener-Puerto {
     param([string]$Servicio = "el servicio")
@@ -25,30 +24,26 @@ function Obtener-Puerto {
     while ($true) {
         $raw = Read-Host "Puerto para $Servicio (ej. 80, 443, 8080, 8443, 9090)"
 
-        # Debe ser número
         if ($raw -notmatch '^\d+$') {
-            Write-Host "  [!] Ingresa solo números." -ForegroundColor Red
+            Write-Host "  [!] Ingresa solo numeros." -ForegroundColor Red
             continue
         }
 
         $p = [int]$raw
 
-        # Rango válido
         if ($p -lt 1 -or $p -gt 65535) {
             Write-Host "  [!] Puerto fuera de rango (1-65535)." -ForegroundColor Red
             continue
         }
 
-        # Puertos reservados del sistema
         if ($puertosBloqueados -contains $p) {
             Write-Host "  [!] Puerto $p reservado por otro servicio del sistema." -ForegroundColor Red
             continue
         }
 
-        # Verificar que no esté ya ocupado en este momento
         $ocupado = netstat -ano 2>$null | Select-String ":$p "
         if ($ocupado) {
-            Write-Host "  [!] Puerto $p ya está en uso por otro proceso." -ForegroundColor Red
+            Write-Host "  [!] Puerto $p ya esta en uso por otro proceso." -ForegroundColor Red
             continue
         }
 
@@ -57,7 +52,7 @@ function Obtener-Puerto {
 }
 
 # =============================================================================
-# LIBERAR PUERTOS  (sin cambios respecto a tu versión original)
+# LIBERAR PUERTOS
 # =============================================================================
 function Liberar-Puertos-Web {
     Write-Host "Limpiando procesos residuales..." -ForegroundColor Yellow
@@ -72,9 +67,13 @@ function Liberar-Puertos-Web {
         sc.exe delete $svc | Out-Null
     }
 
-    Remove-Item -Path "C:\tools\apache24","C:\Apache24","$env:APPDATA\Apache24",
-                      "C:\tools\nginx","C:\nginx" -Recurse -Force -ErrorAction SilentlyContinue
-    Get-ChildItem -Path "C:\" -Filter "nginx-*" -Directory |
+    Remove-Item -Path "C:\tools\apache24" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "C:\Apache24"       -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "$env:APPDATA\Apache24" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "C:\tools\nginx"    -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "C:\nginx"          -Recurse -Force -ErrorAction SilentlyContinue
+
+    Get-ChildItem -Path "C:\" -Filter "nginx-*" -Directory -ErrorAction SilentlyContinue |
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
     Import-Module WebAdministration -ErrorAction SilentlyContinue
@@ -90,20 +89,13 @@ function Liberar-Puertos-Web {
 # =============================================================================
 # INSTALAR APACHE
 # =============================================================================
-# Enseñanza: ahora pedimos el puerto AL INICIO de la función antes de tocar
-# nada.  Si el usuario elige 443 ya existe SSL; si elige 80 es HTTP puro.
-# El VirtualHost de redireccion usa $PuertoHTTP (siempre 80) apuntando a
-# https://...:$Puerto para que la redirección sea correcta incluso en 8443.
-# =============================================================================
 function Instalar-Apache {
     Write-Host "`n--- INSTALANDO APACHE ---" -ForegroundColor Cyan
     Liberar-Puertos-Web
 
-    # ── Elegir puerto ──────────────────────────────────────────────────────
     $Puerto = Obtener-Puerto -Servicio "Apache"
     Write-Host "  [OK] Puerto elegido: $Puerto" -ForegroundColor DarkGray
 
-    # ── Origen ────────────────────────────────────────────────────────────
     Write-Host "1) Descargar de la Web (Chocolatey)"
     Write-Host "2) Descargar del FTP (Privado)"
     $origen = Read-Host "Selecciona el origen"
@@ -124,7 +116,10 @@ function Instalar-Apache {
         foreach ($ruta in @("C:\tools\apache24","$env:APPDATA\Apache24","C:\Apache24")) {
             if (Test-Path $ruta) { $tempDir = $ruta; break }
         }
-        if (-not $tempDir) { Write-Host "Error: instalación Choco falló." -ForegroundColor Red; return }
+        if (-not $tempDir) {
+            Write-Host "Error: instalacion Choco fallo." -ForegroundColor Red
+            return
+        }
         if ($tempDir -ne "C:\Apache24") {
             if (Test-Path "C:\Apache24") { Remove-Item "C:\Apache24" -Recurse -Force }
             Move-Item -Path $tempDir -Destination "C:\Apache24" -Force
@@ -135,11 +130,9 @@ function Instalar-Apache {
         Expand-Archive -Path $rutaZip -DestinationPath "C:\" -Force
     }
 
-    # ── ¿SSL? ──────────────────────────────────────────────────────────────
     $resSSL = Read-Host "Desea activar SSL? [S/N]"
     $isSSL  = ($resSSL -match '^[sS]$')
 
-    # ── httpd.conf ─────────────────────────────────────────────────────────
     $confPath  = "$apacheDir\conf\httpd.conf"
     $confArray = Get-Content $confPath | Where-Object {
         $_ -notmatch '^\s*Listen ' -and $_ -notmatch '^\s*ServerName '
@@ -152,7 +145,6 @@ function Instalar-Apache {
                             '#Include conf/extra/httpd-ssl.conf'
 
     if ($isSSL) {
-        # ── SSL: genera cert, configura HTTPS en $Puerto, redirige 80 ──────
         Write-Host "Generando certificado SSL para www.reprobados.com..."
         $env:OPENSSL_CONF = "$apacheDir\conf\openssl.cnf"
         Set-Location "$apacheDir\bin"
@@ -162,19 +154,17 @@ function Instalar-Apache {
             -days 365 -subj "/CN=www.reprobados.com"
         Set-Location "C:\"
 
-        foreach ($mod in @("ssl_module","socache_shmcb_module","rewrite_module","headers_module")) {
-            $conf = $conf -replace "(?m)^#?\s*LoadModule ${mod}_module.*$",
-                                   "LoadModule $mod modules/mod_${mod}.so"
-        }
-        # LoadModule ssl_module tiene nombre especial
         $conf = $conf -replace "(?m)^#?\s*LoadModule ssl_module.*$",
                                "LoadModule ssl_module modules/mod_ssl.so"
+        $conf = $conf -replace "(?m)^#?\s*LoadModule socache_shmcb_module.*$",
+                               "LoadModule socache_shmcb_module modules/mod_socache_shmcb.so"
+        $conf = $conf -replace "(?m)^#?\s*LoadModule rewrite_module.*$",
+                               "LoadModule rewrite_module modules/mod_rewrite.so"
+        $conf = $conf -replace "(?m)^#?\s*LoadModule headers_module.*$",
+                               "LoadModule headers_module modules/mod_headers.so"
 
-        # Cabecera general: escuchar en 80 (redirección) Y en $Puerto (SSL)
         $conf = "Listen 80`r`nListen ${Puerto}`r`nServerName localhost:80`r`n" + $conf
         $conf += "`r`nInclude conf/extra/httpd-ssl.conf"
-
-        # VirtualHost HTTP → redirige a HTTPS:$Puerto
         $conf += @"
 
 <VirtualHost *:80>
@@ -184,8 +174,6 @@ function Instalar-Apache {
     RewriteRule ^(.*)$ https://%{HTTP_HOST}:${Puerto}%{REQUEST_URI} [L,R=301]
 </VirtualHost>
 "@
-
-        # httpd-ssl.conf con el puerto elegido
         $sslConf = @"
 Listen ${Puerto}
 SSLCipherSuite HIGH:MEDIUM:!MD5:!RC4:!3DES
@@ -212,21 +200,21 @@ SSLSessionCacheTimeout 300
         Set-Content -Path "$apacheDir\conf\extra\httpd-ssl.conf" -Value $sslConf -Force
 
         Escribir-Resumen "[OK] Apache: HTTPS puerto $Puerto (HTTP 80 redirige)."
-        $protocolo = "HTTPS (Seguro)"; $bgColor = "#27ae60"
+        $protocolo = "HTTPS (Seguro)"
+        $bgColor   = "#27ae60"
 
-        # Firewall: abrir 80 (redirección) y el puerto SSL elegido
-        New-NetFirewallRule -DisplayName "Apache HTTP  80"        -Direction Inbound `
-            -LocalPort 80      -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+        New-NetFirewallRule -DisplayName "Apache HTTP 80" -Direction Inbound `
+            -LocalPort 80 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
         New-NetFirewallRule -DisplayName "Apache HTTPS $Puerto" -Direction Inbound `
             -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
     } else {
-        # ── HTTP puro en $Puerto ────────────────────────────────────────────
         $conf = "Listen ${Puerto}`r`nServerName localhost:${Puerto}`r`n" + $conf
         $conf = $conf -replace '(?m)^\s*LoadModule ssl_module.*$',
                                '#LoadModule ssl_module modules/mod_ssl.so'
 
         Escribir-Resumen "[OK] Apache: HTTP puro puerto $Puerto."
-        $protocolo = "HTTP (Inseguro)"; $bgColor = "#2c3e50"
+        $protocolo = "HTTP (Inseguro)"
+        $bgColor   = "#2c3e50"
 
         New-NetFirewallRule -DisplayName "Apache HTTP $Puerto" -Direction Inbound `
             -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
@@ -234,7 +222,6 @@ SSLSessionCacheTimeout 300
 
     $conf | Set-Content $confPath
 
-    # ── index.html ─────────────────────────────────────────────────────────
     $versionFull  = (& "$apacheDir\bin\httpd.exe" -v | Select-String "Server version")
     $versionClean = ($versionFull -split "/")[1] -replace " .*", ""
 
@@ -244,10 +231,10 @@ SSLSessionCacheTimeout 300
   <div style='background:rgba(0,0,0,0.5);display:inline-block;padding:40px;border-radius:20px;border:3px solid white;'>
     <h1>SERVIDOR WEB: APACHE</h1>
     <hr style='width:80%;margin:20px auto;'>
-    <p><b>Versión:</b> $versionClean</p>
+    <p><b>Version:</b> $versionClean</p>
     <p><b>Protocolo:</b> $protocolo</p>
     <p><b>Puerto:</b> $Puerto</p>
-    <p>Configuración para www.reprobados.com</p>
+    <p>Configuracion para www.reprobados.com</p>
   </div>
 </body>
 </html>
@@ -262,10 +249,6 @@ SSLSessionCacheTimeout 300
 # =============================================================================
 # INSTALAR NGINX
 # =============================================================================
-# Enseñanza: Nginx escucha en un único "server { listen PUERTO; }" dentro de
-# nginx.conf.  Generamos ese bloque con el puerto que el usuario eligió.
-# Si hay SSL también generamos el bloque de redirección en 80 → HTTPS:$Puerto.
-# =============================================================================
 function Instalar-Nginx {
     Write-Host "`n--- INSTALANDO NGINX ---" -ForegroundColor Cyan
     Liberar-Puertos-Web
@@ -277,11 +260,12 @@ function Instalar-Nginx {
     Write-Host "2) Descargar del FTP (Privado)"
     $origen = Read-Host "Selecciona el origen"
 
-    $nginxDir = "C:\nginx"
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $chocoExe = "C:\ProgramData\chocolatey\bin\choco.exe"
+    $nginxDir      = "C:\nginx"
+    $chocoExe      = "C:\ProgramData\chocolatey\bin\choco.exe"
     $viejoProgreso = $ProgressPreference
     $ProgressPreference = "SilentlyContinue"
+
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
     if ($origen -eq "1") {
         if (-not (Test-Path $chocoExe)) {
@@ -290,7 +274,7 @@ function Instalar-Nginx {
                 'https://community.chocolatey.org/install.ps1'))
         }
         & $chocoExe install nginx -y --force --params '"/port:8080"' *>$null
-        Stop-Service  -Name "nginx" -Force -ErrorAction SilentlyContinue
+        Stop-Service -Name "nginx" -Force -ErrorAction SilentlyContinue
         sc.exe delete "nginx" | Out-Null
 
         $tempDir = ""
@@ -304,8 +288,9 @@ function Instalar-Nginx {
             if ($found) { $tempDir = $found.FullName; break }
         }
         if (-not $tempDir) {
-            Write-Host "Error: instalación Choco falló." -ForegroundColor Red
-            $ProgressPreference = $viejoProgreso; return
+            Write-Host "Error: instalacion Choco fallo." -ForegroundColor Red
+            $ProgressPreference = $viejoProgreso
+            return
         }
         if ($tempDir -ne "C:\nginx") {
             if (Test-Path "C:\nginx") { Remove-Item "C:\nginx" -Recurse -Force }
@@ -313,7 +298,10 @@ function Instalar-Nginx {
         }
     } else {
         $rutaZip = Navegar-Descargar-FTP -Servicio "Nginx"
-        if (-not $rutaZip) { $ProgressPreference = $viejoProgreso; return }
+        if (-not $rutaZip) {
+            $ProgressPreference = $viejoProgreso
+            return
+        }
         Expand-Archive -Path $rutaZip -DestinationPath "C:\" -Force
         $busqueda = Get-ChildItem -Path "C:\" -Filter "nginx-*" -Directory | Select-Object -First 1
         if ($busqueda.FullName -ne "C:\nginx") {
@@ -340,7 +328,6 @@ function Instalar-Nginx {
             -out    "$nginxDir\conf\server.crt" `
             -days 365 -subj "/CN=www.reprobados.com" 2>$null
 
-        # nginx.conf: 80 redirige, $Puerto escucha SSL
         $nginxConf = @"
 worker_processes 1;
 events { worker_connections 1024; }
@@ -367,10 +354,11 @@ http {
 }
 "@
         Escribir-Resumen "[OK] Nginx: HTTPS puerto $Puerto (HTTP 80 redirige)."
-        $protocolo = "HTTPS (Seguro)"; $bgColor = "#115c2a"
+        $protocolo = "HTTPS (Seguro)"
+        $bgColor   = "#115c2a"
 
-        New-NetFirewallRule -DisplayName "Nginx HTTP  80"        -Direction Inbound `
-            -LocalPort 80      -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+        New-NetFirewallRule -DisplayName "Nginx HTTP 80" -Direction Inbound `
+            -LocalPort 80 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
         New-NetFirewallRule -DisplayName "Nginx HTTPS $Puerto" -Direction Inbound `
             -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
     } else {
@@ -390,7 +378,8 @@ http {
 }
 "@
         Escribir-Resumen "[OK] Nginx: HTTP puro puerto $Puerto."
-        $protocolo = "HTTP (Inseguro)"; $bgColor = "#2c3e50"
+        $protocolo = "HTTP (Inseguro)"
+        $bgColor   = "#2c3e50"
 
         New-NetFirewallRule -DisplayName "Nginx HTTP $Puerto" -Direction Inbound `
             -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
@@ -398,21 +387,21 @@ http {
 
     Set-Content -Path "$nginxDir\conf\nginx.conf" -Value $nginxConf -Force
 
-    # ── index.html ─────────────────────────────────────────────────────────
     $version = (& "$nginxDir\nginx.exe" -v 2>&1) -replace '.*nginx/', ''
     if (-not (Test-Path "$nginxDir\html")) {
         New-Item -ItemType Directory -Path "$nginxDir\html" -Force | Out-Null
     }
+
     $html = @"
 <html>
 <body style='font-family:Arial;text-align:center;background-color:${bgColor};color:white;padding-top:50px;'>
   <div style='background:rgba(0,0,0,0.5);display:inline-block;padding:40px;border-radius:20px;border:3px solid white;'>
     <h1>SERVIDOR WEB: NGINX</h1>
     <hr style='width:80%;margin:20px auto;'>
-    <p><b>Versión:</b> $version</p>
+    <p><b>Version:</b> $version</p>
     <p><b>Protocolo:</b> $protocolo</p>
     <p><b>Puerto:</b> $Puerto</p>
-    <p>Configuración para www.reprobados.com</p>
+    <p>Configuracion para www.reprobados.com</p>
   </div>
 </body>
 </html>
@@ -427,10 +416,8 @@ http {
 
 # =============================================================================
 # INSTALAR IIS WEB
-# =============================================================================
-# Enseñanza: IIS usa bindings.  Un binding es la combinación IP:Puerto:HostHeader.
-# Podemos crear varios sitios en IIS siempre que cada uno tenga un puerto distinto.
-# Si SSL, creamos el binding HTTPS también en $Puerto.
+# IIS usa bindings: combinacion IP:Puerto:HostHeader.
+# El nombre del sitio incluye el puerto para evitar duplicados.
 # =============================================================================
 function Instalar-IIS-Web {
     Write-Host "`n--- INSTALANDO IIS WEB ---" -ForegroundColor Cyan
@@ -439,14 +426,13 @@ function Instalar-IIS-Web {
     $Puerto = Obtener-Puerto -Servicio "IIS"
     Write-Host "  [OK] Puerto elegido: $Puerto" -ForegroundColor DarkGray
 
-    Write-Host "Instalando características base de IIS..."
+    Write-Host "Instalando caracteristicas base de IIS..."
     Install-WindowsFeature -name Web-Server -IncludeManagementTools | Out-Null
     Start-Service -Name "W3SVC" -ErrorAction SilentlyContinue
     Start-Service -Name "WAS"   -ErrorAction SilentlyContinue
 
     Import-Module WebAdministration -ErrorAction SilentlyContinue
 
-    # Limpiar sitios anteriores de esta práctica (no el Default)
     Get-Website | Where-Object { $_.Name -like "SitioIIS_Practica7*" } | ForEach-Object {
         Stop-Website   -Name $_.Name -ErrorAction SilentlyContinue
         Remove-Website -Name $_.Name -ErrorAction SilentlyContinue
@@ -455,7 +441,6 @@ function Instalar-IIS-Web {
     $resSSL = Read-Host "Desea activar SSL? [S/N]"
     $isSSL  = ($resSSL -match '^[sS]$')
 
-    # Nombre único del sitio incluye el puerto para poder correr varios a la vez
     $siteName = "SitioIIS_Practica7_$Puerto"
     $sitePath = "C:\inetpub\wwwroot\$siteName"
 
@@ -473,13 +458,12 @@ function Instalar-IIS-Web {
         iisreset /restart | Out-Null
 
         Add-Content -Path "$sitePath\index.html" `
-            -Value "<h1>IIS Seguro (HTTPS) — Puerto $Puerto — www.reprobados.com</h1>" -Force
+            -Value "<h1>IIS Seguro (HTTPS) - Puerto $Puerto - www.reprobados.com</h1>" -Force
 
         Write-Host "Generando certificado SSL para www.reprobados.com..."
         $cert = New-SelfSignedCertificate -DnsName "www.reprobados.com" `
                     -CertStoreLocation "cert:\LocalMachine\My"
 
-        # Sitio base en HTTP (redirección) + binding HTTPS en $Puerto
         New-Website -Name $siteName -Port 80 -PhysicalPath $sitePath -Force | Out-Null
         New-WebBinding -Name $siteName -Protocol "https" -Port $Puerto -IPAddress "*"
 
@@ -489,7 +473,6 @@ function Instalar-IIS-Web {
             New-Item -Path "*!$Puerto" -Force | Out-Null
         Pop-Location
 
-        # web.config: redirige 80 → HTTPS:$Puerto y activa HSTS
         $webConfig = @"
 <?xml version="1.0" encoding="UTF-8"?>
 <configuration>
@@ -518,13 +501,13 @@ function Instalar-IIS-Web {
 
         New-NetFirewallRule -DisplayName "IIS HTTPS $Puerto" -Direction Inbound `
             -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
-        New-NetFirewallRule -DisplayName "IIS HTTP  80"      -Direction Inbound `
-            -LocalPort 80      -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+        New-NetFirewallRule -DisplayName "IIS HTTP 80" -Direction Inbound `
+            -LocalPort 80 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
 
         Escribir-Resumen "[OK] IIS: HTTPS puerto $Puerto (HTTP 80 redirige)."
     } else {
         Add-Content -Path "$sitePath\index.html" `
-            -Value "<h1>IIS HTTP — Puerto $Puerto</h1>" -Force
+            -Value "<h1>IIS HTTP - Puerto $Puerto</h1>" -Force
         New-Website -Name $siteName -Port $Puerto -PhysicalPath $sitePath -Force | Out-Null
 
         New-NetFirewallRule -DisplayName "IIS HTTP $Puerto" -Direction Inbound `
@@ -538,19 +521,19 @@ function Instalar-IIS-Web {
 }
 
 # =============================================================================
-# IIS FTP  (sin cambios funcionales, sólo ajuste de variables de entorno)
+# IIS FTP
 # =============================================================================
 function Instalar-IIS-FTP {
     Write-Host "`n--- INSTALANDO IIS FTP ---" -ForegroundColor Cyan
     Install-WindowsFeature Web-FTP-Server -IncludeManagementTools | Out-Null
 
-    $ftpUser = Read-Host "Usuario de la Práctica 5 a reutilizar"
+    $ftpUser = Read-Host "Usuario de la Practica 5 a reutilizar"
     $ADSI    = [ADSI]"WinNT://$env:ComputerName"
     $existe  = $ADSI.Children | Where-Object {
         $_.SchemaClassName -eq 'User' -and $_.Name -eq $ftpUser
     }
     if (-not $existe) {
-        Write-Host "El usuario $ftpUser no existe. Créalo primero con el script de la Práctica 5." -ForegroundColor Red
+        Write-Host "El usuario $ftpUser no existe. Crealo primero con la Practica 5." -ForegroundColor Red
         return
     }
 
@@ -574,8 +557,7 @@ function Instalar-IIS-FTP {
     }
 
     New-WebFtpSite -Name "FTP_Practica7" -Port $puerto -PhysicalPath $ftpPath -Force | Out-Null
-    Set-ItemProperty "IIS:\Sites\FTP_Practica7" `
-        -Name ftpServer.userIsolation.mode -Value 0
+    Set-ItemProperty "IIS:\Sites\FTP_Practica7" -Name ftpServer.userIsolation.mode -Value 0
     Remove-WebConfigurationProperty `
         -Filter "/system.ftpServer/security/authorization" `
         -Name "." -Location "FTP_Practica7" -ErrorAction SilentlyContinue
@@ -613,16 +595,17 @@ function Instalar-IIS-FTP {
 }
 
 # =============================================================================
-# NAVEGAR / DESCARGAR POR FTP  (sin cambios)
+# NAVEGAR / DESCARGAR POR FTP
 # =============================================================================
 function Navegar-Descargar-FTP {
     param([string]$Servicio)
     Write-Host "--- BUSCANDO INSTALADORES DE $Servicio EN FTP ---" -ForegroundColor Cyan
 
-    $ftpUser     = "repositorio"
-    $ftpPassword = "Hola1234."
-    $urlBase     = "ftp://localhost:21/"
+    $ftpUser      = "repositorio"
+    $ftpPassword  = "Hola1234."
+    $urlBase      = "ftp://localhost:21/"
     $dirDescargas = "C:\descargas_ftp"
+
     if (-not (Test-Path $dirDescargas)) {
         New-Item -ItemType Directory -Force -Path $dirDescargas | Out-Null
     }
@@ -640,14 +623,15 @@ function Navegar-Descargar-FTP {
     for ($i = 0; $i -lt $archivos.Count; $i++) {
         Write-Host "$($i+1)) $($archivos[$i].Trim())"
     }
-    $selVer         = Read-Host "Selecciona el número de versión"
+
+    $selVer         = Read-Host "Selecciona el numero de version"
     $archivoElegido = $archivos[[int]$selVer - 1].Trim()
 
     $rutaInstalador = "$dirDescargas\$archivoElegido"
     $rutaHash       = "$dirDescargas\$archivoElegido.sha256"
 
     curl.exe -s --show-error -k -u "${ftpUser}:${ftpPassword}" `
-        "${urlVersiones}${archivoElegido}"        -o $rutaInstalador
+        "${urlVersiones}${archivoElegido}" -o $rutaInstalador
     curl.exe -s --show-error -k -u "${ftpUser}:${ftpPassword}" `
         "${urlVersiones}${archivoElegido}.sha256" -o $rutaHash
 
@@ -661,7 +645,7 @@ function Navegar-Descargar-FTP {
         Write-Host "Error: hash no coincide." -ForegroundColor Red
         return $null
     }
+
     Write-Host "Error: descarga fallida." -ForegroundColor Red
     return $null
-    
 }
