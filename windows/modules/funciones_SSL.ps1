@@ -198,7 +198,6 @@ LoadModule ssl_module modules/mod_ssl.so
 LoadModule socache_shmcb_module modules/mod_socache_shmcb.so
 LoadModule rewrite_module modules/mod_rewrite.so
 LoadModule headers_module modules/mod_headers.so
-LoadModule unixd_module modules/mod_unixd.so
 
 TypesConfig conf/mime.types
 DocumentRoot "C:/Apache24/htdocs"
@@ -259,7 +258,6 @@ LoadModule authn_core_module modules/mod_authn_core.so
 LoadModule authz_core_module modules/mod_authz_core.so
 LoadModule mime_module modules/mod_mime.so
 LoadModule log_config_module modules/mod_log_config.so
-LoadModule unixd_module modules/mod_unixd.so
 
 TypesConfig conf/mime.types
 DocumentRoot "C:/Apache24/htdocs"
@@ -304,23 +302,41 @@ CustomLog "logs/access.log" common
 "@
     Set-Content -Path "$apacheDir\htdocs\index.html" -Value $html -Force
 
+    # Validar httpd.conf ANTES de lanzar (igual que nginx -t)
+    # Esto muestra el error exacto en pantalla sin tener que abrir el log
+    Write-Host "  Validando httpd.conf..." -ForegroundColor DarkGray
+    $testResult = & "$apacheDir\bin\httpd.exe" -t 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  [!] httpd.conf invalido:" -ForegroundColor Red
+        $testResult | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        Write-Host ""
+        Write-Host "  Ultimas lineas de error.log:" -ForegroundColor Yellow
+        Get-Content "$apacheDir\logs\error.log" -Tail 15 -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        return
+    }
+    Write-Host "  [OK] httpd.conf valido." -ForegroundColor DarkGray
+
     Write-Host "Iniciando Apache en puerto $Puerto..." -ForegroundColor Cyan
     $proc = Start-Process -FilePath "$apacheDir\bin\httpd.exe" -WindowStyle Hidden -PassThru
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 3
 
     if ($proc.HasExited) {
-        Write-Host "  [!] Apache termino de inmediato. Revisa: $apacheDir\logs\error.log" -ForegroundColor Red
-        Get-Content "$apacheDir\logs\error.log" -Tail 5 -ErrorAction SilentlyContinue |
+        Write-Host "  [!] Apache termino de inmediato." -ForegroundColor Red
+        Write-Host "  Ultimas lineas de error.log:" -ForegroundColor Yellow
+        Get-Content "$apacheDir\logs\error.log" -Tail 15 -ErrorAction SilentlyContinue |
             ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
         return
     }
 
     $ok = Esperar-Puerto -Puerto $Puerto -intentos 15
     if ($ok) {
-        Write-Host "[OK] Apache corriendo. Abre: http://192.168.56.102:$Puerto" -ForegroundColor Green
+        Write-Host "[OK] Apache corriendo. Abre: https://192.168.56.102:$Puerto" -ForegroundColor Green
     } else {
         Write-Host "[!] Apache inicio pero el puerto $Puerto no responde." -ForegroundColor Red
-        Write-Host "    Revisa: $apacheDir\logs\error.log" -ForegroundColor Yellow
+        Write-Host "  Ultimas lineas de error.log:" -ForegroundColor Yellow
+        Get-Content "$apacheDir\logs\error.log" -Tail 15 -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
     }
 }
 
