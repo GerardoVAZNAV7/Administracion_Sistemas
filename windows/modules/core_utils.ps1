@@ -8,7 +8,11 @@
 # =====================================================
 # MENSAJES Y FORMATO
 # =====================================================
-
+$Global:DomainName    = "practica.local"    # Tu dominio
+$Global:DomainNetBIOS = "PRACTICA"          # Nombre corto
+$Global:DomainDN      = "DC=practica,DC=local"
+$Global:SafePassword  = "Gerardo1234!!"     # Contraseña DSRM
+$Global:ProfilesRoot  = "C:\Perfiles"       # Carpeta de perfiles
 function Write-Color {
     param(
         [string]$Mensaje,

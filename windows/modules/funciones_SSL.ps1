@@ -621,14 +621,23 @@ function Instalar-IIS-Web {
         $cert = New-SelfSignedCertificate -DnsName "www.reprobados.com" `
                     -CertStoreLocation "cert:\LocalMachine\My"
 
+        # Detener Default Web Site si ocupa el 80
+        if (Get-Website -Name "Default Web Site" -ErrorAction SilentlyContinue) {
+            Stop-Website -Name "Default Web Site" -ErrorAction SilentlyContinue
+        }
+
+        # Crear sitio con binding HTTP en 80 y HTTPS en $Puerto
         New-Website -Name $siteName -Port 80 -PhysicalPath $sitePath -Force | Out-Null
         New-WebBinding -Name $siteName -Protocol "https" -Port $Puerto -IPAddress "*"
 
+        # Vincular certificado al puerto HTTPS
         Push-Location IIS:\SslBindings
         Remove-Item -Path "*!$Puerto" -Force -ErrorAction SilentlyContinue
         Get-Item "cert:\LocalMachine\My\$($cert.Thumbprint)" |
             New-Item -Path "*!$Puerto" -Force | Out-Null
         Pop-Location
+
+        Write-Host "  [OK] Sitio creado con HTTP:80 y HTTPS:$Puerto" -ForegroundColor DarkGray
 
         $webConfig = @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -673,13 +682,46 @@ function Instalar-IIS-Web {
         Escribir-Resumen "[OK] IIS: HTTP puro puerto $Puerto."
     }
 
-    Start-Website -Name $siteName -ErrorAction SilentlyContinue
+    # Asegurar que W3SVC este corriendo antes de verificar
+    Start-Service -Name "W3SVC" -ErrorAction SilentlyContinue
+    Start-Service -Name "WAS"   -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
 
-    $ok = Esperar-Puerto -Puerto $Puerto -intentos 15
+    # Arrancar el sitio explicitamente
+    Start-Website -Name $siteName -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+
+    # Verificar estado del sitio
+    $sitioEstado = (Get-Website -Name $siteName -ErrorAction SilentlyContinue).State
+    Write-Host "  Estado del sitio: $sitioEstado" -ForegroundColor DarkGray
+
+    # Con SSL el puerto que escucha es $Puerto (HTTPS), no 80
+    $puertoVerificar = $Puerto
+
+    $ok = Esperar-Puerto -Puerto $puertoVerificar -intentos 20
     if ($ok) {
-        Write-Host "[OK] IIS corriendo. Abre: http://192.168.56.102:$Puerto" -ForegroundColor Green
+        Write-Host "  [OK] IIS corriendo en https://192.168.56.102:$Puerto" -ForegroundColor Green
     } else {
-        Write-Host "[!] IIS inicio pero el puerto $Puerto no responde todavia." -ForegroundColor Yellow
+        Write-Host "  [!] Puerto $Puerto no responde. Diagnostico:" -ForegroundColor Red
+
+        # Ver estado de todos los sitios IIS
+        Write-Host "  --- Sitios IIS ---" -ForegroundColor Yellow
+        Get-Website -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "      $($_.Name) -> $($_.State)" -ForegroundColor Yellow
+        }
+
+        # Ver bindings del sitio
+        Write-Host "  --- Bindings del sitio ---" -ForegroundColor Yellow
+        Get-WebBinding -Name $siteName -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "      $($_.protocol):$($_.bindingInformation)" -ForegroundColor Yellow
+        }
+
+        # Ver log de eventos IIS
+        Write-Host "  --- Log de eventos IIS (ultimos 5) ---" -ForegroundColor Yellow
+        Get-EventLog -LogName System -Source "Microsoft-Windows-IIS*" -Newest 5 -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Host "      $($_.Message)" -ForegroundColor Yellow }
+
+        Write-Host "  Intenta abrir IIS Manager y verifica que el sitio $siteName este iniciado." -ForegroundColor Cyan
     }
 }
 
