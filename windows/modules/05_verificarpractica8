@@ -1,0 +1,209 @@
+#Requires -RunAsAdministrator
+# =============================================================================
+# verificar_practica8.ps1
+# PRACTICA 8 - Script de verificacion y generacion de evidencias
+#
+# Ejecutar en el servidor DC para verificar todo lo configurado.
+# Genera un reporte en C:\Practica8\Reporte_Practica8.txt
+# =============================================================================
+
+Import-Module ActiveDirectory
+$ErrorActionPreference = "Continue"
+
+$rutaReporte = "C:\Practica8\Reporte_Practica8.txt"
+New-Item -ItemType Directory -Path "C:\Practica8" -Force | Out-Null
+
+$linea = "=" * 60
+
+function Seccion { param($titulo)
+    $msg = "`n$linea`n  $titulo`n$linea"
+    Write-Host $msg -ForegroundColor Cyan
+    $msg | Out-File -FilePath $rutaReporte -Append -Encoding UTF8
+}
+
+function Ok { param($m)
+    $msg = "  [OK]  $m"
+    Write-Host $msg -ForegroundColor Green
+    $msg | Out-File -FilePath $rutaReporte -Append -Encoding UTF8
+}
+
+function Fallo { param($m)
+    $msg = "  [FAIL] $m"
+    Write-Host $msg -ForegroundColor Red
+    $msg | Out-File -FilePath $rutaReporte -Append -Encoding UTF8
+}
+
+function Info { param($m)
+    Write-Host "  $m"
+    "  $m" | Out-File -FilePath $rutaReporte -Append -Encoding UTF8
+}
+
+# Cabecera del reporte
+$cabecera = @"
+$linea
+  PRACTICA 8 - REPORTE DE VERIFICACION
+  Fecha: $(Get-Date -Format 'dd/MM/yyyy HH:mm:ss')
+  Servidor: $env:COMPUTERNAME
+  Dominio: $((Get-ADDomain).DNSRoot)
+$linea
+"@
+$cabecera | Out-File -FilePath $rutaReporte -Encoding UTF8
+Write-Host $cabecera -ForegroundColor Magenta
+
+# ── Verificacion 1: Estructura de AD ─────────────────────────────────────────
+Seccion "1. ESTRUCTURA DE ACTIVE DIRECTORY"
+
+$ous = Get-ADOrganizationalUnit -Filter * -SearchBase "DC=practica,DC=local"
+foreach ($ou in @("Cuates","NoCuates")) {
+    if ($ous | Where-Object { $_.Name -eq $ou }) {
+        Ok "OU '$ou' existe."
+    } else {
+        Fallo "OU '$ou' NO encontrada."
+    }
+}
+
+# ── Verificacion 2: Usuarios y su distribucion ────────────────────────────────
+Seccion "2. USUARIOS Y DISTRIBUCION EN OUs"
+
+$usuarios = Get-ADUser -Filter * -SearchBase "DC=practica,DC=local" `
+    -Properties Department, DistinguishedName
+
+foreach ($u in $usuarios) {
+    if ($u.Department -ne $null) {
+        $ouCorrecta = $u.DistinguishedName -match "OU=$($u.Department)"
+        if ($ouCorrecta) {
+            Ok "$($u.SamAccountName) -> OU: $($u.Department) [CORRECTO]"
+        } else {
+            Fallo "$($u.SamAccountName) -> Departamento: $($u.Department) pero NO esta en la OU correcta"
+        }
+    }
+}
+
+# Tabla de usuarios
+Seccion "2.1 TABLA COMPLETA DE USUARIOS"
+$tabla = $usuarios | Select-Object Name, SamAccountName, Department |
+    Format-Table -AutoSize | Out-String
+Write-Host $tabla
+$tabla | Out-File -FilePath $rutaReporte -Append -Encoding UTF8
+
+# ── Verificacion 3: Horarios LogonHours ───────────────────────────────────────
+Seccion "3. HORARIOS DE INICIO DE SESION (LogonHours)"
+
+$usuariosConHorario = Get-ADUser -Filter * -SearchBase "DC=practica,DC=local" `
+    -Properties Department, LogonHours
+
+foreach ($u in $usuariosConHorario) {
+    if ($u.LogonHours -ne $null -and $u.Department -ne $null) {
+        Ok "$($u.SamAccountName) ($($u.Department)) tiene LogonHours configurado [21 bytes]"
+    } elseif ($u.Department -ne $null) {
+        Fallo "$($u.SamAccountName) ($($u.Department)) NO tiene LogonHours configurado"
+    }
+}
+
+# ── Verificacion 4: GPOs ───────────────────────────────────────────────────────
+Seccion "4. GROUP POLICY OBJECTS (GPOs)"
+
+$gposEsperadas = @(
+    "Practica8-LogonHours-Enforcement",
+    "Practica8-AppLocker-Cuates",
+    "Practica8-AppLocker-NoCuates"
+)
+
+foreach ($gpoNombre in $gposEsperadas) {
+    $gpo = Get-GPO -Name $gpoNombre -ErrorAction SilentlyContinue
+    if ($gpo) {
+        Ok "GPO '$gpoNombre' existe. Estado: $($gpo.GpoStatus)"
+    } else {
+        Fallo "GPO '$gpoNombre' NO encontrada."
+    }
+}
+
+# ── Verificacion 5: FSRM Cuotas ───────────────────────────────────────────────
+Seccion "5. CUOTAS FSRM"
+
+$cuotas = Get-FsrmQuota -ErrorAction SilentlyContinue
+if ($cuotas) {
+    Info "Cuotas configuradas:"
+    foreach ($cuota in $cuotas) {
+        $tamano = [math]::Round($cuota.Size / 1MB, 0)
+        $uso = if ($cuota.Usage -gt 0) { [math]::Round($cuota.Usage / 1KB, 1) } else { 0 }
+        Ok "  $($cuota.Path) -> Limite: ${tamano}MB, Uso actual: ${uso}KB, Tipo: $(if($cuota.SoftLimit){'Soft'}else{'Hard'})"
+    }
+} else {
+    Fallo "No se encontraron cuotas FSRM."
+}
+
+# ── Verificacion 6: FSRM File Screens ─────────────────────────────────────────
+Seccion "6. APANTALLAMIENTO DE ARCHIVOS (File Screens)"
+
+$screens = Get-FsrmFileScreen -ErrorAction SilentlyContinue
+if ($screens) {
+    foreach ($screen in $screens) {
+        $tipo = if ($screen.Active) { "ACTIVO (bloqueante)" } else { "Pasivo (solo registro)" }
+        Ok "  $($screen.Path) -> $tipo, Grupo: $($screen.IncludeGroup -join ', ')"
+    }
+} else {
+    Fallo "No se encontraron File Screens configurados."
+}
+
+# ── Verificacion 7: Grupos de archivos FSRM ────────────────────────────────────
+Seccion "7. GRUPOS DE ARCHIVOS BLOQUEADOS"
+
+$grupo = Get-FsrmFileGroup -Name "Practica8-Bloqueados" -ErrorAction SilentlyContinue
+if ($grupo) {
+    Ok "Grupo 'Practica8-Bloqueados' encontrado."
+    Info "Extensiones bloqueadas: $($grupo.IncludePattern -join ', ')"
+} else {
+    Fallo "Grupo de archivos 'Practica8-Bloqueados' NO encontrado."
+}
+
+# ── Verificacion 8: Servicio AppLocker ─────────────────────────────────────────
+Seccion "8. APPLOCKER (Application Identity Service)"
+
+$appidSvc = Get-Service -Name "AppIDSvc" -ErrorAction SilentlyContinue
+if ($appidSvc -and $appidSvc.Status -eq "Running") {
+    Ok "Servicio AppIDSvc (Application Identity) esta CORRIENDO."
+} else {
+    Fallo "Servicio AppIDSvc NO esta corriendo. AppLocker no funcionara."
+}
+
+# ── Verificacion 9: Eventos de FSRM en el log ─────────────────────────────────
+Seccion "9. EVENTOS RECIENTES DE FSRM (ultimos 10)"
+
+$eventos = Get-WinEvent -LogName "Microsoft-Windows-FSRM-SRM" -MaxEvents 10 `
+    -ErrorAction SilentlyContinue
+if ($eventos) {
+    foreach ($e in $eventos) {
+        Info "[$($e.TimeCreated.ToString('HH:mm:ss'))] ID:$($e.Id) - $($e.Message.Substring(0,[math]::Min(80,$e.Message.Length)))"
+    }
+} else {
+    Info "No hay eventos recientes de FSRM (normal si no se ha probado aun)."
+    Info "Para generar eventos: intenta guardar un archivo > al limite en una carpeta con cuota."
+}
+
+# ── Resumen final ──────────────────────────────────────────────────────────────
+$resumen = @"
+
+$linea
+  RESUMEN DE VERIFICACION
+$linea
+  Reporte guardado en: $rutaReporte
+  
+  RUBRICA DE EVALUACION:
+  - 40% Cuotas FSRM: Verifica fisicamente intentando guardar archivos
+        > 5MB (NoCuates) y > 10MB (Cuates) en las carpetas de perfil.
+  
+  - 30% AppLocker: Inicia sesion como usuario de NoCuates e intenta
+        abrir notepad.exe. Tambien prueba renombrando el archivo.
+  
+  - 15% Horarios: Verifica que el sistema fuerce cierre de sesion
+        al expirar el tiempo configurado.
+  
+  - 15% Documento: Incluye capturas de los eventos del Visor de Eventos
+        (Windows Logs > Application) filtrando por fuente "SRMSVC".
+$linea
+"@
+Write-Host $resumen -ForegroundColor Yellow
+$resumen | Out-File -FilePath $rutaReporte -Append -Encoding UTF8
+
+Write-Host "`nReporte completo en: $rutaReporte" -ForegroundColor Green
