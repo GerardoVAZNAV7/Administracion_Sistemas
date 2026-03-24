@@ -117,13 +117,17 @@ function Esperar-Puerto {
 # =============================================================================
 # INSTALAR APACHE - SIEMPRE REINSTALA DESDE CHOCOLATEY
 # =============================================================================
+# =============================================================================
+# INSTALAR APACHE - SIEMPRE DESINSTALA Y REINSTALA DESDE CHOCOLATEY
+# Nginx e IIS no se tocan
+# =============================================================================
 function Instalar-Apache {
     Write-Host "`n--- INSTALANDO APACHE (REINSTALACION FORZADA CHOCO) ---" -ForegroundColor Cyan
 
     $chocoExe = "C:\ProgramData\chocolatey\bin\choco.exe"
 
-    # PASO 1: Matar todo lo que sea Apache
-    Write-Host "  [1/6] Limpiando instalacion anterior..." -ForegroundColor Yellow
+    # PASO 1: Matar todos los procesos y servicios Apache
+    Write-Host "  [1/6] Limpiando instalacion anterior de Apache..." -ForegroundColor Yellow
     taskkill /F /IM httpd.exe /T 2>$null | Out-Null
     foreach ($svc in @("Apache-Practica7","apache","Apache2.4","httpd")) {
         Stop-Service  -Name $svc -Force -ErrorAction SilentlyContinue
@@ -132,8 +136,9 @@ function Instalar-Apache {
     Remove-Item -Path "C:\Apache24"       -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "C:\tools\apache24" -Recurse -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
+    Write-Host "       [OK] Apache anterior eliminado." -ForegroundColor Green
 
-    # PASO 2: Instalar/actualizar Chocolatey
+    # PASO 2: Verificar/instalar Chocolatey
     Write-Host "  [2/6] Verificando Chocolatey..." -ForegroundColor Yellow
     if (-not (Test-Path $chocoExe)) {
         Write-Host "       Instalando Chocolatey..." -ForegroundColor DarkGray
@@ -145,14 +150,14 @@ function Instalar-Apache {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Write-Host "       [OK] Chocolatey listo." -ForegroundColor Green
 
-    # PASO 3: Desinstalar apache-httpd de choco y reinstalar forzado
+    # PASO 3: Desinstalar apache-httpd anterior y reinstalar forzado
     Write-Host "  [3/6] Reinstalando apache-httpd via Chocolatey (forzado)..." -ForegroundColor Yellow
     & $chocoExe uninstall apache-httpd -y --limit-output 2>$null | Out-Null
     Start-Sleep -Seconds 2
     & $chocoExe install apache-httpd -y --force --params "/NoService" --limit-output
-    Write-Host "       [OK] Instalacion de Chocolatey completada." -ForegroundColor Green
+    Write-Host "       [OK] Chocolatey termino la instalacion." -ForegroundColor Green
 
-    # PASO 4: Encontrar httpd.exe (Choco puede instalarlo en distintos lugares)
+    # PASO 4: Localizar httpd.exe (Choco puede dejarlo en distintos lugares)
     Write-Host "  [4/6] Localizando httpd.exe..." -ForegroundColor Yellow
     $tempDir = ""
     $rutasBusqueda = @(
@@ -165,40 +170,44 @@ function Instalar-Apache {
     foreach ($ruta in $rutasBusqueda) {
         if (Test-Path "$ruta\bin\httpd.exe") { $tempDir = $ruta; break }
     }
-    # Busqueda exhaustiva si no aparecio
+    # Busqueda exhaustiva si no aparecio en las rutas conocidas
     if (-not $tempDir) {
+        Write-Host "       Buscando httpd.exe en ProgramData\chocolatey..." -ForegroundColor DarkGray
         $found = Get-ChildItem "C:\ProgramData\chocolatey" -Filter "httpd.exe" `
-                    -Recurse -Depth 10 -ErrorAction SilentlyContinue | Select-Object -First 1
+                     -Recurse -Depth 10 -ErrorAction SilentlyContinue | Select-Object -First 1
         if (-not $found) {
+            Write-Host "       Buscando httpd.exe en C:\..." -ForegroundColor DarkGray
             $found = Get-ChildItem "C:\" -Filter "httpd.exe" `
-                        -Recurse -Depth 6 -ErrorAction SilentlyContinue | Select-Object -First 1
+                         -Recurse -Depth 6 -ErrorAction SilentlyContinue | Select-Object -First 1
         }
         if ($found) { $tempDir = $found.DirectoryName -replace "\\bin$","" }
     }
 
     if (-not $tempDir) {
-        Write-Host "  [!] httpd.exe no encontrado. Revisa la instalacion de Chocolatey." -ForegroundColor Red
+        Write-Host "  [!] httpd.exe no encontrado. La instalacion de Chocolatey fallo." -ForegroundColor Red
+        Write-Host "       Verifica conexion a internet y vuelve a intentar." -ForegroundColor Yellow
         return
     }
     Write-Host "       Encontrado en: $tempDir" -ForegroundColor DarkGray
 
-    # Mover a C:\Apache24 si no esta ahi
+    # Copiar a C:\Apache24 si no esta ahi ya
     if ($tempDir -ne "C:\Apache24") {
         if (Test-Path "C:\Apache24") { Remove-Item "C:\Apache24" -Recurse -Force }
         Copy-Item -Path $tempDir -Destination "C:\Apache24" -Recurse -Force
     }
-    Write-Host "       [OK] Apache en C:\Apache24" -ForegroundColor Green
+    Write-Host "       [OK] Apache listo en C:\Apache24" -ForegroundColor Green
 
     # PASO 5: Verificar VCRUNTIME140.dll
+    Write-Host "  [5/6] Verificando dependencias..." -ForegroundColor Yellow
     if (-not (Test-Path "C:\Windows\System32\VCRUNTIME140.dll")) {
-        Write-Host "  [5/6] Instalando VC++ Redistributable..." -ForegroundColor Yellow
+        Write-Host "       Instalando VC++ Redistributable..." -ForegroundColor DarkGray
         & $chocoExe install vcredist140 -y --limit-output
     } else {
-        Write-Host "  [5/6] VCRUNTIME140.dll OK." -ForegroundColor DarkGray
+        Write-Host "       [OK] VCRUNTIME140.dll presente." -ForegroundColor DarkGray
     }
 
-    # PASO 6: Configurar SSL y lanzar
-    Write-Host "  [6/6] Configurando SSL y lanzando Apache..." -ForegroundColor Yellow
+    # PASO 6: Configurar SSL y lanzar Apache
+    Write-Host "  [6/6] Configurando SSL y lanzando Apache en puerto 443..." -ForegroundColor Yellow
 
     # Generar certificado SSL
     $env:OPENSSL_CONF = "C:\Apache24\conf\openssl.cnf"
@@ -208,13 +217,14 @@ function Instalar-Apache {
         -out    "C:\Apache24\conf\server.crt" `
         -days 365 -subj "/CN=www.reprobados.com" 2>&1 | Out-Null
     Set-Location "C:\"
-    Write-Host "       Certificado SSL generado." -ForegroundColor DarkGray
+    Write-Host "       [OK] Certificado SSL generado." -ForegroundColor DarkGray
 
-    # Leer LoadModules del httpd.conf original
+    # Leer LoadModules del httpd.conf original de Chocolatey
     $confPath     = "C:\Apache24\conf\httpd.conf"
     $confOriginal = Get-Content $confPath -Raw
     $loadMods     = ($confOriginal -split "`n") | Where-Object { $_ -match "^\s*LoadModule\s" }
 
+    # Agregar modulos SSL si no estan
     foreach ($mod in @("mod_ssl.so","mod_socache_shmcb.so","mod_rewrite.so","mod_headers.so")) {
         if (-not ($loadMods | Where-Object { $_ -match $mod })) {
             if (Test-Path "C:\Apache24\modules\$mod") {
@@ -274,10 +284,11 @@ function Instalar-Apache {
         "    Header always set Strict-Transport-Security `"max-age=31536000; includeSubDomains`"",
         "</VirtualHost>"
     )
+
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllLines($confPath, $httpconfLines, $utf8NoBom)
 
-    # Validar configuracion
+    # Validar configuracion antes de lanzar
     $testOut = & "C:\Apache24\bin\httpd.exe" -t 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [!] Error en httpd.conf:" -ForegroundColor Red
@@ -329,9 +340,6 @@ function Instalar-Apache {
     }
 }
 
-# =============================================================================
-# INSTALAR NGINX - SIEMPRE REINSTALA DESDE CHOCOLATEY
-# =============================================================================
 function Instalar-Nginx {
     Write-Host "`n--- INSTALANDO NGINX (REINSTALACION FORZADA CHOCO) ---" -ForegroundColor Cyan
 
