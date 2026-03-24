@@ -58,8 +58,6 @@ function Limpiar-Apache {
         Stop-Service  -Name $svc -Force -ErrorAction SilentlyContinue
         sc.exe delete $svc | Out-Null
     }
-    # IMPORTANTE: NO borrar la carpeta de Chocolatey (ProgramData)
-    # Solo borramos C:\Apache24 (copia de trabajo) y C:\tools\apache24
     Remove-Item -Path "C:\Apache24"       -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "C:\tools\apache24" -Recurse -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
@@ -112,94 +110,103 @@ function Esperar-Puerto {
 }
 
 # =============================================================================
-# INSTALAR APACHE
+# INSTALAR APACHE - UNICA FUNCION MODIFICADA
+# Siempre desinstala con choco y reinstala forzado
+# Nginx e IIS NO fueron tocados
 # =============================================================================
 function Instalar-Apache {
-    Write-Host "`n--- INSTALANDO APACHE (puerto 443 SSL) ---" -ForegroundColor Cyan
-    Limpiar-Apache
+    Write-Host "`n--- INSTALANDO APACHE (REINSTALACION FORZADA CHOCO) ---" -ForegroundColor Cyan
 
-    $apacheDir = "C:\Apache24"
-    $chocoExe  = "C:\ProgramData\chocolatey\bin\choco.exe"
+    $chocoExe = "C:\ProgramData\chocolatey\bin\choco.exe"
 
+    # PASO 1: Matar todo Apache anterior
+    Write-Host "  [1/6] Limpiando Apache anterior..." -ForegroundColor Yellow
+    taskkill /F /IM httpd.exe /T 2>$null | Out-Null
+    foreach ($svc in @("Apache-Practica7","apache","Apache2.4","httpd")) {
+        Stop-Service  -Name $svc -Force -ErrorAction SilentlyContinue
+        sc.exe delete $svc 2>$null | Out-Null
+    }
+    Remove-Item -Path "C:\Apache24"       -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "C:\tools\apache24" -Recurse -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    Write-Host "       [OK] Limpieza completada." -ForegroundColor Green
+
+    # PASO 2: Verificar/instalar Chocolatey
+    Write-Host "  [2/6] Verificando Chocolatey..." -ForegroundColor Yellow
     if (-not (Test-Path $chocoExe)) {
-        Write-Host "  Instalando Chocolatey..." -ForegroundColor Cyan
+        Write-Host "       Instalando Chocolatey..." -ForegroundColor DarkGray
         Set-ExecutionPolicy Bypass -Scope Process -Force
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-Expression ((New-Object System.Net.WebClient).DownloadString(
             "https://community.chocolatey.org/install.ps1"))
     }
-
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Write-Host "       [OK] Chocolatey listo." -ForegroundColor Green
 
+    # PASO 3: Desinstalar y reinstalar apache-httpd forzado
+    # /NoService evita que Choco intente registrar Apache como servicio
+    # o configurar puertos durante la instalacion
+    Write-Host "  [3/6] Reinstalando apache-httpd via Chocolatey (forzado)..." -ForegroundColor Yellow
+    & $chocoExe uninstall apache-httpd -y --limit-output 2>$null | Out-Null
+    Start-Sleep -Seconds 2
+    & $chocoExe install apache-httpd -y --force --params "/NoService" --limit-output
+    Write-Host "       [OK] Chocolatey termino." -ForegroundColor Green
+
+    # PASO 4: Localizar httpd.exe (Choco puede dejarlo en distintos lugares)
+    Write-Host "  [4/6] Localizando httpd.exe..." -ForegroundColor Yellow
     $tempDir = ""
     $rutasBusqueda = @(
         "$env:APPDATA\Apache24",
         "C:\Apache24",
         "C:\tools\apache24",
         "C:\ProgramData\chocolatey\lib\apache-httpd\tools\Apache24",
-        "C:\ProgramData\chocolatey\lib\apache-httpd\tools\Apache24\bin\..\",
         "C:\ProgramData\chocolatey\lib\apache-httpd\Apache24"
     )
     foreach ($ruta in $rutasBusqueda) {
         if (Test-Path "$ruta\bin\httpd.exe") { $tempDir = $ruta; break }
     }
-
-    # Busqueda exhaustiva en ProgramData (Chocolatey puede variar la ruta)
     if (-not $tempDir) {
-        Write-Host "  Buscando en ProgramData\chocolatey..." -ForegroundColor DarkGray
-        $found = Get-ChildItem "C:\ProgramData\chocolatey" -Filter "httpd.exe" -Recurse -Depth 8 -ErrorAction SilentlyContinue |
-                 Select-Object -First 1
-        if ($found) {
-            $tempDir = $found.DirectoryName -replace "\\bin$",""
-            Write-Host "  Encontrado en: $tempDir" -ForegroundColor Green
+        Write-Host "       Buscando en ProgramData\chocolatey..." -ForegroundColor DarkGray
+        $found = Get-ChildItem "C:\ProgramData\chocolatey" -Filter "httpd.exe" `
+                     -Recurse -Depth 10 -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $found) {
+            Write-Host "       Buscando en C:\..." -ForegroundColor DarkGray
+            $found = Get-ChildItem "C:\" -Filter "httpd.exe" `
+                         -Recurse -Depth 6 -ErrorAction SilentlyContinue | Select-Object -First 1
         }
+        if ($found) { $tempDir = $found.DirectoryName -replace "\\bin$","" }
     }
-
     if (-not $tempDir) {
-        Write-Host "  Apache no encontrado. Instalando via Chocolatey..." -ForegroundColor Cyan
-        & $chocoExe install apache-httpd -y --params "/NoService" --limit-output
-
-        foreach ($ruta in $rutasBusqueda) {
-            if (Test-Path "$ruta\bin\httpd.exe") { $tempDir = $ruta; break }
-        }
-    } else {
-        Write-Host "  Apache encontrado en: $tempDir" -ForegroundColor Green
-    }
-
-    if (-not $tempDir) {
-        Write-Host "  Buscando httpd.exe en todo el sistema..." -ForegroundColor Yellow
-        $found = Get-ChildItem "C:\" -Filter "httpd.exe" -Recurse -Depth 6 -ErrorAction SilentlyContinue |
-                 Select-Object -First 1
-        if ($found) {
-            $tempDir = $found.DirectoryName -replace "\\bin$",""
-        }
-    }
-
-    if (-not $tempDir) {
-        Write-Host "  [!] httpd.exe no encontrado. Instalacion fallo." -ForegroundColor Red
+        Write-Host "  [!] httpd.exe no encontrado. Revisa la conexion a internet." -ForegroundColor Red
         return
     }
-
+    Write-Host "       Encontrado en: $tempDir" -ForegroundColor DarkGray
     if ($tempDir -ne "C:\Apache24") {
         if (Test-Path "C:\Apache24") { Remove-Item "C:\Apache24" -Recurse -Force }
-        Move-Item -Path $tempDir -Destination "C:\Apache24" -Force
+        Copy-Item -Path $tempDir -Destination "C:\Apache24" -Recurse -Force
     }
+    Write-Host "       [OK] Apache en C:\Apache24" -ForegroundColor Green
 
-    Write-Host "  [OK] Apache listo en C:\Apache24" -ForegroundColor Green
-
+    # PASO 5: Verificar VCRUNTIME140.dll
+    Write-Host "  [5/6] Verificando dependencias..." -ForegroundColor Yellow
     if (-not (Test-Path "C:\Windows\System32\VCRUNTIME140.dll")) {
-        Write-Host "  Instalando VC++ Redistributable..." -ForegroundColor Yellow
+        Write-Host "       Instalando VC++ Redistributable..." -ForegroundColor DarkGray
         & $chocoExe install vcredist140 -y --limit-output
+    } else {
+        Write-Host "       [OK] VCRUNTIME140.dll presente." -ForegroundColor DarkGray
     }
 
-    Write-Host "  Generando certificado SSL para www.reprobados.com..." -ForegroundColor Cyan
+    # PASO 6: Configurar SSL y lanzar
+    Write-Host "  [6/6] Configurando SSL y lanzando Apache en puerto 443..." -ForegroundColor Yellow
+
     $env:OPENSSL_CONF = "C:\Apache24\conf\openssl.cnf"
     Set-Location "C:\Apache24\bin"
     .\openssl.exe req -x509 -nodes -newkey rsa:2048 `
         -keyout "C:\Apache24\conf\server.key" `
         -out    "C:\Apache24\conf\server.crt" `
-        -days 365 -subj "/CN=www.reprobados.com"
+        -days 365 -subj "/CN=www.reprobados.com" 2>&1 | Out-Null
     Set-Location "C:\"
+    Write-Host "       [OK] Certificado SSL generado." -ForegroundColor DarkGray
 
     $confPath     = "C:\Apache24\conf\httpd.conf"
     $confOriginal = Get-Content $confPath -Raw
@@ -208,22 +215,23 @@ function Instalar-Apache {
     foreach ($mod in @("mod_ssl.so","mod_socache_shmcb.so","mod_rewrite.so","mod_headers.so")) {
         if (-not ($loadMods | Where-Object { $_ -match $mod })) {
             if (Test-Path "C:\Apache24\modules\$mod") {
-                $nombre  = $mod -replace "mod_","" -replace "\.so",""
+                $nombre   = $mod -replace "mod_","" -replace "\.so",""
                 $loadMods += "LoadModule ${nombre}_module modules/$mod"
+                Write-Host "       [+] Modulo: $mod" -ForegroundColor DarkGray
             }
         }
     }
+    $loadModsStr = ($loadMods | ForEach-Object { $_.TrimEnd() }) -join "`r`n"
 
-    $loadModsStr   = ($loadMods | ForEach-Object { $_.TrimEnd() }) -join "`r`n"
     $puerto80Libre = -not (netstat -ano 2>$null | Select-String ":80 ")
-
     if ($puerto80Libre) {
         $listenBlock  = "Listen 80`r`nListen 443"
         $vhost80Block = "<VirtualHost *:80>`r`n    ServerName www.reprobados.com`r`n    RewriteEngine On`r`n    RewriteCond %{HTTPS} off`r`n    RewriteRule ^(.*)$ https://%{HTTP_HOST}:443%{REQUEST_URI} [L,R=301]`r`n</VirtualHost>"
+        Write-Host "       Puerto 80 libre. Apache usara 80 y 443." -ForegroundColor DarkGray
     } else {
         $listenBlock  = "Listen 443"
         $vhost80Block = ""
-        Write-Host "  Puerto 80 ocupado - Apache usara solo 443." -ForegroundColor Yellow
+        Write-Host "       Puerto 80 ocupado. Apache usara solo 443." -ForegroundColor Yellow
     }
 
     $httpconfLines = @(
@@ -265,16 +273,14 @@ function Instalar-Apache {
 
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllLines($confPath, $httpconfLines, $utf8NoBom)
-    Write-Host "  [OK] httpd.conf escrito." -ForegroundColor DarkGray
 
-    Write-Host "  Validando httpd.conf..." -ForegroundColor DarkGray
     $testOut = & "C:\Apache24\bin\httpd.exe" -t 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [!] Error en httpd.conf:" -ForegroundColor Red
         $testOut | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
         return
     }
-    Write-Host "  [OK] httpd.conf valido." -ForegroundColor Green
+    Write-Host "       [OK] httpd.conf valido." -ForegroundColor Green
 
     @"
 <html><body style='font-family:Arial;text-align:center;background:#27ae60;color:white;padding-top:50px;'>
@@ -287,7 +293,6 @@ function Instalar-Apache {
     New-NetFirewallRule -DisplayName "Apache HTTP 80"   -Direction Inbound -LocalPort 80  -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
     New-NetFirewallRule -DisplayName "Apache HTTPS 443" -Direction Inbound -LocalPort 443 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
 
-    Write-Host "  Iniciando Apache en puerto 443..." -ForegroundColor Cyan
     $proc = Start-Process -FilePath "C:\Apache24\bin\httpd.exe" -WindowStyle Hidden -PassThru
     Start-Sleep -Seconds 3
 
@@ -302,7 +307,11 @@ function Instalar-Apache {
 
     $ok = Esperar-Puerto -Puerto 443 -intentos 15
     if ($ok) {
-        Write-Host "  [OK] Apache corriendo en https://192.168.56.102" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "  ============================================" -ForegroundColor Green
+        Write-Host "  [OK] APACHE CORRIENDO" -ForegroundColor Green
+        Write-Host "  URL: https://192.168.56.102" -ForegroundColor Green
+        Write-Host "  ============================================" -ForegroundColor Green
         Escribir-Resumen "[OK] Apache: HTTPS puerto 443."
     } else {
         Write-Host "  [!] Puerto 443 no responde." -ForegroundColor Red
@@ -314,7 +323,7 @@ function Instalar-Apache {
 }
 
 # =============================================================================
-# INSTALAR NGINX
+# INSTALAR NGINX - SIN CAMBIOS (igual al documento adjunto)
 # =============================================================================
 function Instalar-Nginx {
     Write-Host "`n--- INSTALANDO NGINX ---" -ForegroundColor Cyan
@@ -441,21 +450,11 @@ function Instalar-Nginx {
 }
 
 # =============================================================================
-# INSTALAR IIS WEB
-# FIXES APLICADOS:
-#   1. iisreset /restart antes de crear el sitio
-#   2. Instalar Web-Asp-Net45 para activar el pipeline completo de IIS
-#   3. Crear sitio en puerto temporal y luego agregar binding HTTPS
-#   4. Vincular certificado con formato "0.0.0.0!PUERTO"
-#   5. Usar appcmd.exe para forzar inicio del sitio
-#   6. Timeout de 30s en Esperar-Puerto
+# INSTALAR IIS WEB - SIN CAMBIOS (igual al documento adjunto)
 # =============================================================================
 function Instalar-IIS-Web {
     Write-Host "`n--- INSTALANDO IIS WEB (REINSTALACION FORZADA) ---" -ForegroundColor Cyan
 
-    # =========================================================
-    # PASO 1: DESINSTALAR IIS COMPLETAMENTE Y REINSTALAR
-    # =========================================================
     Write-Host "  [1/7] Desinstalando IIS completamente..." -ForegroundColor Yellow
     iisreset /stop 2>&1 | Out-Null
     Stop-Service -Name W3SVC,WAS -Force -ErrorAction SilentlyContinue
@@ -475,9 +474,6 @@ Web-Http-Logging,Web-Security,Web-Mgmt-Console -IncludeManagementTools | Out-Nul
 
     Import-Module WebAdministration -Force -ErrorAction Stop
 
-    # =========================================================
-    # PASO 2: PEDIR CONFIGURACION AL USUARIO
-    # =========================================================
     $Puerto   = Obtener-Puerto -Servicio "IIS"
     $resSSL   = Read-Host "  Desea activar SSL? [S/N]"
     $isSSL    = ($resSSL -match '^[sS]$')
@@ -486,17 +482,11 @@ Web-Http-Logging,Web-Security,Web-Mgmt-Console -IncludeManagementTools | Out-Nul
 
     Write-Host "  [OK] Puerto: $Puerto  |  SSL: $isSSL" -ForegroundColor DarkGray
 
-    # =========================================================
-    # PASO 3: DETENER DEFAULT WEB SITE
-    # =========================================================
     Write-Host "  [4/7] Deteniendo Default Web Site..." -ForegroundColor Yellow
     if (Get-Website -Name "Default Web Site" -ErrorAction SilentlyContinue) {
         Stop-Website -Name "Default Web Site" -ErrorAction SilentlyContinue
     }
 
-    # =========================================================
-    # PASO 4: CREAR CARPETA Y CONTENIDO WEB
-    # =========================================================
     if (Test-Path $sitePath) { Remove-Item $sitePath -Recurse -Force }
     New-Item -ItemType Directory -Path $sitePath -Force | Out-Null
 
@@ -516,13 +506,9 @@ Web-Http-Logging,Web-Security,Web-Mgmt-Console -IncludeManagementTools | Out-Nul
 </html>
 "@ | Set-Content "$sitePath\index.html" -Encoding UTF8 -Force
 
-    # =========================================================
-    # PASO 5: CREAR SITIO IIS
-    # =========================================================
     Write-Host "  [5/7] Creando sitio IIS '$siteName'..." -ForegroundColor Yellow
 
     if ($isSSL) {
-        # Generar certificado autofirmado
         Write-Host "       Generando certificado SSL..." -ForegroundColor DarkGray
         $cert = New-SelfSignedCertificate `
             -DnsName "www.reprobados.com","reprobados.com","localhost" `
@@ -530,17 +516,14 @@ Web-Http-Logging,Web-Security,Web-Mgmt-Console -IncludeManagementTools | Out-Nul
             -NotAfter (Get-Date).AddYears(1)
         Write-Host "       Thumbprint: $($cert.Thumbprint)" -ForegroundColor DarkGray
 
-        # Crear sitio en puerto HTTPS directo (sin puerto temporal)
         New-Website -Name $siteName -Port $Puerto -PhysicalPath $sitePath `
             -Ssl -Force | Out-Null
 
-        # Vincular certificado
         $bindPath = "IIS:\SslBindings\0.0.0.0!$Puerto"
         if (Test-Path $bindPath) { Remove-Item $bindPath -Force }
         $cert | New-Item $bindPath -Force | Out-Null
         Write-Host "       Certificado vinculado al puerto $Puerto" -ForegroundColor DarkGray
 
-        # Firewall
         New-NetFirewallRule -DisplayName "IIS HTTPS $Puerto" -Direction Inbound `
             -LocalPort $Puerto -Protocol TCP -Action Allow `
             -ErrorAction SilentlyContinue | Out-Null
@@ -557,12 +540,8 @@ Web-Http-Logging,Web-Security,Web-Mgmt-Console -IncludeManagementTools | Out-Nul
         Escribir-Resumen "[OK] IIS HTTP puerto $Puerto"
     }
 
-    # =========================================================
-    # PASO 6: ARRANCAR SITIO Y APPLICATION POOL
-    # =========================================================
     Write-Host "  [6/7] Arrancando sitio y Application Pool..." -ForegroundColor Yellow
 
-    # Arrancar el Application Pool
     $poolName = (Get-Website -Name $siteName -ErrorAction SilentlyContinue).ApplicationPool
     if ($poolName) {
         Start-WebAppPool -Name $poolName -ErrorAction SilentlyContinue
@@ -570,7 +549,6 @@ Web-Http-Logging,Web-Security,Web-Mgmt-Console -IncludeManagementTools | Out-Nul
         Write-Host "       Pool '$poolName' iniciado." -ForegroundColor DarkGray
     }
 
-    # Arrancar el sitio por 3 métodos distintos
     Start-Website -Name $siteName -ErrorAction SilentlyContinue
     Start-WebItem  "IIS:\Sites\$siteName" -ErrorAction SilentlyContinue
     $appcmd = "$env:SystemRoot\system32\inetsrv\appcmd.exe"
@@ -580,13 +558,9 @@ Web-Http-Logging,Web-Security,Web-Mgmt-Console -IncludeManagementTools | Out-Nul
 
     Start-Sleep -Seconds 3
 
-    # Mostrar estado del sitio
     $estado = (Get-Website -Name $siteName -ErrorAction SilentlyContinue).State
     Write-Host "       Estado del sitio: $estado" -ForegroundColor DarkGray
 
-    # =========================================================
-    # PASO 7: VERIFICAR PUERTO
-    # =========================================================
     Write-Host "  [7/7] Verificando puerto $Puerto..." -ForegroundColor Yellow
     $ok = Esperar-Puerto -Puerto $Puerto -intentos 30
 
@@ -602,20 +576,16 @@ Web-Http-Logging,Web-Security,Web-Mgmt-Console -IncludeManagementTools | Out-Nul
     } else {
         Write-Host ""
         Write-Host "  [!] Puerto $Puerto no responde. Diagnostico:" -ForegroundColor Red
-
         Write-Host "  --- Sitios ---" -ForegroundColor Yellow
         Get-Website -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Host "      $($_.Name) -> $($_.State)" -ForegroundColor Yellow
         }
-
         Write-Host "  --- Pools ---" -ForegroundColor Yellow
         Get-WebConfiguration "system.applicationHost/applicationPools/add" |
             ForEach-Object { Write-Host "      $($_.name) -> $($_.state)" -ForegroundColor Yellow }
-
         Write-Host "  --- netstat puerto $Puerto ---" -ForegroundColor Yellow
         netstat -ano 2>$null | Select-String ":$Puerto " |
             ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
-
         Write-Host ""
         Write-Host "  Abre IIS Manager y verifica que '$siteName' este en Started." -ForegroundColor Cyan
     }
@@ -657,14 +627,14 @@ function Instalar-IIS-FTP {
 
     if ($isSSL) {
         $cert = New-SelfSignedCertificate -DnsName "www.reprobados.com" -CertStoreLocation "cert:\LocalMachine\My"
-        Set-ItemProperty "IIS:\Sites\FTP_Practica7" -Name ftpServer.security.ssl.serverCertHash   -Value $cert.Thumbprint
-        Set-ItemProperty "IIS:\Sites\FTP_Practica7" -Name ftpServer.security.ssl.controlChannelPolicy -Value 1
-        Set-ItemProperty "IIS:\Sites\FTP_Practica7" -Name ftpServer.security.ssl.dataChannelPolicy    -Value 1
+        Set-ItemProperty "IIS:\Sites\FTP_Practica7" -Name ftpServer.security.ssl.serverCertHash        -Value $cert.Thumbprint
+        Set-ItemProperty "IIS:\Sites\FTP_Practica7" -Name ftpServer.security.ssl.controlChannelPolicy  -Value 1
+        Set-ItemProperty "IIS:\Sites\FTP_Practica7" -Name ftpServer.security.ssl.dataChannelPolicy     -Value 1
         New-NetFirewallRule -DisplayName "IIS FTPS 990" -Direction Inbound -LocalPort 990 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
         Escribir-Resumen "[OK] IIS FTP: FTPS puerto 990."
     } else {
-        Set-ItemProperty "IIS:\Sites\FTP_Practica7" -Name ftpServer.security.ssl.controlChannelPolicy -Value 0
-        Set-ItemProperty "IIS:\Sites\FTP_Practica7" -Name ftpServer.security.ssl.dataChannelPolicy    -Value 0
+        Set-ItemProperty "IIS:\Sites\FTP_Practica7" -Name ftpServer.security.ssl.controlChannelPolicy  -Value 0
+        Set-ItemProperty "IIS:\Sites\FTP_Practica7" -Name ftpServer.security.ssl.dataChannelPolicy     -Value 0
         New-NetFirewallRule -DisplayName "IIS FTP 21" -Direction Inbound -LocalPort 21 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
         Escribir-Resumen "[OK] IIS FTP: FTP plano puerto 21."
     }
@@ -679,7 +649,7 @@ function Instalar-IIS-FTP {
 }
 
 # =============================================================================
-# NAVEGAR / DESCARGAR POR FTP
+# NAVEGAR / DESCARGAR POR FTP - SIN CAMBIOS
 # =============================================================================
 function Navegar-Descargar-FTP {
     param([string]$Servicio)
@@ -707,8 +677,8 @@ function Navegar-Descargar-FTP {
     $rutaInstalador = "$dirDescargas\$archivoElegido"
     $rutaHash       = "$dirDescargas\$archivoElegido.sha256"
 
-    curl.exe -s --show-error -k -u "${ftpUser}:${ftpPassword}" "${urlVersiones}${archivoElegido}"      -o $rutaInstalador
-    curl.exe -s --show-error -k -u "${ftpUser}:${ftpPassword}" "${urlVersiones}${archivoElegido}.sha256" -o $rutaHash
+    curl.exe -s --show-error -k -u "${ftpUser}:${ftpPassword}" "${urlVersiones}${archivoElegido}"        -o $rutaInstalador
+    curl.exe -s --show-error -k -u "${ftpUser}:${ftpPassword}" "${urlVersiones}${archivoElegido}.sha256"  -o $rutaHash
 
     if ((Test-Path $rutaInstalador) -and (Test-Path $rutaHash)) {
         $hashCalc = (Get-FileHash -Path $rutaInstalador -Algorithm SHA256).Hash.ToLower()
