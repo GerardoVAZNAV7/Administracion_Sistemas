@@ -114,93 +114,103 @@ function Esperar-Puerto {
 # =============================================================================
 # INSTALAR APACHE
 # =============================================================================
+# =============================================================================
+# INSTALAR APACHE - SIEMPRE REINSTALA DESDE CHOCOLATEY
+# =============================================================================
 function Instalar-Apache {
-    Write-Host "`n--- INSTALANDO APACHE (puerto 443 SSL) ---" -ForegroundColor Cyan
-    Limpiar-Apache
+    Write-Host "`n--- INSTALANDO APACHE (REINSTALACION FORZADA CHOCO) ---" -ForegroundColor Cyan
 
-    $apacheDir = "C:\Apache24"
-    $chocoExe  = "C:\ProgramData\chocolatey\bin\choco.exe"
+    $chocoExe = "C:\ProgramData\chocolatey\bin\choco.exe"
 
+    # PASO 1: Matar todo lo que sea Apache
+    Write-Host "  [1/6] Limpiando instalacion anterior..." -ForegroundColor Yellow
+    taskkill /F /IM httpd.exe /T 2>$null | Out-Null
+    foreach ($svc in @("Apache-Practica7","apache","Apache2.4","httpd")) {
+        Stop-Service  -Name $svc -Force -ErrorAction SilentlyContinue
+        sc.exe delete $svc 2>$null | Out-Null
+    }
+    Remove-Item -Path "C:\Apache24"       -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path "C:\tools\apache24" -Recurse -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+
+    # PASO 2: Instalar/actualizar Chocolatey
+    Write-Host "  [2/6] Verificando Chocolatey..." -ForegroundColor Yellow
     if (-not (Test-Path $chocoExe)) {
-        Write-Host "  Instalando Chocolatey..." -ForegroundColor Cyan
+        Write-Host "       Instalando Chocolatey..." -ForegroundColor DarkGray
         Set-ExecutionPolicy Bypass -Scope Process -Force
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Invoke-Expression ((New-Object System.Net.WebClient).DownloadString(
             "https://community.chocolatey.org/install.ps1"))
     }
-
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Write-Host "       [OK] Chocolatey listo." -ForegroundColor Green
 
+    # PASO 3: Desinstalar apache-httpd de choco y reinstalar forzado
+    Write-Host "  [3/6] Reinstalando apache-httpd via Chocolatey (forzado)..." -ForegroundColor Yellow
+    & $chocoExe uninstall apache-httpd -y --limit-output 2>$null | Out-Null
+    Start-Sleep -Seconds 2
+    & $chocoExe install apache-httpd -y --force --params "/NoService" --limit-output
+    Write-Host "       [OK] Instalacion de Chocolatey completada." -ForegroundColor Green
+
+    # PASO 4: Encontrar httpd.exe (Choco puede instalarlo en distintos lugares)
+    Write-Host "  [4/6] Localizando httpd.exe..." -ForegroundColor Yellow
     $tempDir = ""
     $rutasBusqueda = @(
         "$env:APPDATA\Apache24",
         "C:\Apache24",
         "C:\tools\apache24",
         "C:\ProgramData\chocolatey\lib\apache-httpd\tools\Apache24",
-        "C:\ProgramData\chocolatey\lib\apache-httpd\tools\Apache24\bin\..\",
         "C:\ProgramData\chocolatey\lib\apache-httpd\Apache24"
     )
     foreach ($ruta in $rutasBusqueda) {
         if (Test-Path "$ruta\bin\httpd.exe") { $tempDir = $ruta; break }
     }
-
-    # Busqueda exhaustiva en ProgramData (Chocolatey puede variar la ruta)
+    # Busqueda exhaustiva si no aparecio
     if (-not $tempDir) {
-        Write-Host "  Buscando en ProgramData\chocolatey..." -ForegroundColor DarkGray
-        $found = Get-ChildItem "C:\ProgramData\chocolatey" -Filter "httpd.exe" -Recurse -Depth 8 -ErrorAction SilentlyContinue |
-                 Select-Object -First 1
-        if ($found) {
-            $tempDir = $found.DirectoryName -replace "\\bin$",""
-            Write-Host "  Encontrado en: $tempDir" -ForegroundColor Green
+        $found = Get-ChildItem "C:\ProgramData\chocolatey" -Filter "httpd.exe" `
+                    -Recurse -Depth 10 -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $found) {
+            $found = Get-ChildItem "C:\" -Filter "httpd.exe" `
+                        -Recurse -Depth 6 -ErrorAction SilentlyContinue | Select-Object -First 1
         }
+        if ($found) { $tempDir = $found.DirectoryName -replace "\\bin$","" }
     }
 
     if (-not $tempDir) {
-        Write-Host "  Apache no encontrado. Instalando via Chocolatey..." -ForegroundColor Cyan
-        & $chocoExe install apache-httpd -y --params "/NoService" --limit-output
-
-        foreach ($ruta in $rutasBusqueda) {
-            if (Test-Path "$ruta\bin\httpd.exe") { $tempDir = $ruta; break }
-        }
-    } else {
-        Write-Host "  Apache encontrado en: $tempDir" -ForegroundColor Green
-    }
-
-    if (-not $tempDir) {
-        Write-Host "  Buscando httpd.exe en todo el sistema..." -ForegroundColor Yellow
-        $found = Get-ChildItem "C:\" -Filter "httpd.exe" -Recurse -Depth 6 -ErrorAction SilentlyContinue |
-                 Select-Object -First 1
-        if ($found) {
-            $tempDir = $found.DirectoryName -replace "\\bin$",""
-        }
-    }
-
-    if (-not $tempDir) {
-        Write-Host "  [!] httpd.exe no encontrado. Instalacion fallo." -ForegroundColor Red
+        Write-Host "  [!] httpd.exe no encontrado. Revisa la instalacion de Chocolatey." -ForegroundColor Red
         return
     }
+    Write-Host "       Encontrado en: $tempDir" -ForegroundColor DarkGray
 
+    # Mover a C:\Apache24 si no esta ahi
     if ($tempDir -ne "C:\Apache24") {
         if (Test-Path "C:\Apache24") { Remove-Item "C:\Apache24" -Recurse -Force }
-        Move-Item -Path $tempDir -Destination "C:\Apache24" -Force
+        Copy-Item -Path $tempDir -Destination "C:\Apache24" -Recurse -Force
     }
+    Write-Host "       [OK] Apache en C:\Apache24" -ForegroundColor Green
 
-    Write-Host "  [OK] Apache listo en C:\Apache24" -ForegroundColor Green
-
+    # PASO 5: Verificar VCRUNTIME140.dll
     if (-not (Test-Path "C:\Windows\System32\VCRUNTIME140.dll")) {
-        Write-Host "  Instalando VC++ Redistributable..." -ForegroundColor Yellow
+        Write-Host "  [5/6] Instalando VC++ Redistributable..." -ForegroundColor Yellow
         & $chocoExe install vcredist140 -y --limit-output
+    } else {
+        Write-Host "  [5/6] VCRUNTIME140.dll OK." -ForegroundColor DarkGray
     }
 
-    Write-Host "  Generando certificado SSL para www.reprobados.com..." -ForegroundColor Cyan
+    # PASO 6: Configurar SSL y lanzar
+    Write-Host "  [6/6] Configurando SSL y lanzando Apache..." -ForegroundColor Yellow
+
+    # Generar certificado SSL
     $env:OPENSSL_CONF = "C:\Apache24\conf\openssl.cnf"
     Set-Location "C:\Apache24\bin"
     .\openssl.exe req -x509 -nodes -newkey rsa:2048 `
         -keyout "C:\Apache24\conf\server.key" `
         -out    "C:\Apache24\conf\server.crt" `
-        -days 365 -subj "/CN=www.reprobados.com"
+        -days 365 -subj "/CN=www.reprobados.com" 2>&1 | Out-Null
     Set-Location "C:\"
+    Write-Host "       Certificado SSL generado." -ForegroundColor DarkGray
 
+    # Leer LoadModules del httpd.conf original
     $confPath     = "C:\Apache24\conf\httpd.conf"
     $confOriginal = Get-Content $confPath -Raw
     $loadMods     = ($confOriginal -split "`n") | Where-Object { $_ -match "^\s*LoadModule\s" }
@@ -208,22 +218,24 @@ function Instalar-Apache {
     foreach ($mod in @("mod_ssl.so","mod_socache_shmcb.so","mod_rewrite.so","mod_headers.so")) {
         if (-not ($loadMods | Where-Object { $_ -match $mod })) {
             if (Test-Path "C:\Apache24\modules\$mod") {
-                $nombre  = $mod -replace "mod_","" -replace "\.so",""
+                $nombre   = $mod -replace "mod_","" -replace "\.so",""
                 $loadMods += "LoadModule ${nombre}_module modules/$mod"
+                Write-Host "       [+] Modulo agregado: $mod" -ForegroundColor DarkGray
             }
         }
     }
+    $loadModsStr = ($loadMods | ForEach-Object { $_.TrimEnd() }) -join "`r`n"
 
-    $loadModsStr   = ($loadMods | ForEach-Object { $_.TrimEnd() }) -join "`r`n"
+    # Detectar si el puerto 80 esta libre
     $puerto80Libre = -not (netstat -ano 2>$null | Select-String ":80 ")
-
     if ($puerto80Libre) {
         $listenBlock  = "Listen 80`r`nListen 443"
         $vhost80Block = "<VirtualHost *:80>`r`n    ServerName www.reprobados.com`r`n    RewriteEngine On`r`n    RewriteCond %{HTTPS} off`r`n    RewriteRule ^(.*)$ https://%{HTTP_HOST}:443%{REQUEST_URI} [L,R=301]`r`n</VirtualHost>"
+        Write-Host "       Puerto 80 libre. Apache usara 80 y 443." -ForegroundColor DarkGray
     } else {
         $listenBlock  = "Listen 443"
         $vhost80Block = ""
-        Write-Host "  Puerto 80 ocupado - Apache usara solo 443." -ForegroundColor Yellow
+        Write-Host "       Puerto 80 ocupado. Apache usara solo 443." -ForegroundColor Yellow
     }
 
     $httpconfLines = @(
@@ -262,20 +274,19 @@ function Instalar-Apache {
         "    Header always set Strict-Transport-Security `"max-age=31536000; includeSubDomains`"",
         "</VirtualHost>"
     )
-
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllLines($confPath, $httpconfLines, $utf8NoBom)
-    Write-Host "  [OK] httpd.conf escrito." -ForegroundColor DarkGray
 
-    Write-Host "  Validando httpd.conf..." -ForegroundColor DarkGray
+    # Validar configuracion
     $testOut = & "C:\Apache24\bin\httpd.exe" -t 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [!] Error en httpd.conf:" -ForegroundColor Red
         $testOut | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
         return
     }
-    Write-Host "  [OK] httpd.conf valido." -ForegroundColor Green
+    Write-Host "       [OK] httpd.conf valido." -ForegroundColor Green
 
+    # index.html
     @"
 <html><body style='font-family:Arial;text-align:center;background:#27ae60;color:white;padding-top:50px;'>
 <div style='background:rgba(0,0,0,0.5);display:inline-block;padding:40px;border-radius:20px;border:3px solid white;'>
@@ -284,15 +295,16 @@ function Instalar-Apache {
 <p>www.reprobados.com</p></div></body></html>
 "@ | Set-Content "C:\Apache24\htdocs\index.html" -Force
 
+    # Firewall
     New-NetFirewallRule -DisplayName "Apache HTTP 80"   -Direction Inbound -LocalPort 80  -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
     New-NetFirewallRule -DisplayName "Apache HTTPS 443" -Direction Inbound -LocalPort 443 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
 
-    Write-Host "  Iniciando Apache en puerto 443..." -ForegroundColor Cyan
+    # Lanzar Apache
     $proc = Start-Process -FilePath "C:\Apache24\bin\httpd.exe" -WindowStyle Hidden -PassThru
     Start-Sleep -Seconds 3
 
     if ($proc.HasExited) {
-        Write-Host "  [!] Apache termino de inmediato." -ForegroundColor Red
+        Write-Host "  [!] Apache termino de inmediato. Revisando error.log..." -ForegroundColor Red
         if (Test-Path "C:\Apache24\logs\error.log") {
             Get-Content "C:\Apache24\logs\error.log" -Tail 20 |
                 ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
@@ -302,7 +314,11 @@ function Instalar-Apache {
 
     $ok = Esperar-Puerto -Puerto 443 -intentos 15
     if ($ok) {
-        Write-Host "  [OK] Apache corriendo en https://192.168.56.102" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "  ============================================" -ForegroundColor Green
+        Write-Host "  [OK] APACHE CORRIENDO" -ForegroundColor Green
+        Write-Host "  URL: https://192.168.56.102" -ForegroundColor Green
+        Write-Host "  ============================================" -ForegroundColor Green
         Escribir-Resumen "[OK] Apache: HTTPS puerto 443."
     } else {
         Write-Host "  [!] Puerto 443 no responde." -ForegroundColor Red
@@ -314,142 +330,223 @@ function Instalar-Apache {
 }
 
 # =============================================================================
-# INSTALAR NGINX
+# INSTALAR NGINX - SIEMPRE REINSTALA DESDE CHOCOLATEY
 # =============================================================================
 function Instalar-Nginx {
-    Write-Host "`n--- INSTALANDO NGINX ---" -ForegroundColor Cyan
-    Limpiar-Nginx
+    Write-Host "`n--- INSTALANDO NGINX (REINSTALACION FORZADA CHOCO) ---" -ForegroundColor Cyan
 
-    $Puerto  = Obtener-Puerto -Servicio "Nginx"
-    Write-Host "  [OK] Puerto elegido: $Puerto" -ForegroundColor DarkGray
+    $chocoExe = "C:\ProgramData\chocolatey\bin\choco.exe"
 
-    Write-Host "1) Descargar de la Web (Chocolatey)"
-    Write-Host "2) Descargar del FTP (Privado)"
-    $origen = Read-Host "Selecciona el origen"
+    # PASO 1: Matar todo lo que sea Nginx
+    Write-Host "  [1/5] Limpiando instalacion anterior..." -ForegroundColor Yellow
+    taskkill /F /IM nginx.exe /T 2>$null | Out-Null
+    Stop-Service -Name "nginx" -Force -ErrorAction SilentlyContinue
+    sc.exe delete "nginx" 2>$null | Out-Null
+    Remove-Item -Path "C:\nginx" -Recurse -Force -ErrorAction SilentlyContinue
+    Get-ChildItem -Path "C:\" -Filter "nginx-*" -Directory -ErrorAction SilentlyContinue |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+    Write-Host "       [OK] Limpieza completada." -ForegroundColor Green
 
-    $nginxDir           = "C:\nginx"
-    $chocoExe           = "C:\ProgramData\chocolatey\bin\choco.exe"
-    $viejoProgreso      = $ProgressPreference
-    $ProgressPreference = "SilentlyContinue"
-
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-    if ($origen -eq "1") {
-        if (-not (Test-Path $chocoExe)) {
-            Set-ExecutionPolicy Bypass -Scope Process -Force
-            Invoke-Expression ((New-Object System.Net.WebClient).DownloadString(
-                'https://community.chocolatey.org/install.ps1'))
-        }
-        & $chocoExe install nginx -y --force --params '"/port:8080"' *>$null
-        Stop-Service -Name "nginx" -Force -ErrorAction SilentlyContinue
-        sc.exe delete "nginx" | Out-Null
-
-        $tempDir = ""
-        foreach ($ruta in @("C:\tools","C:\","$env:APPDATA","$env:ProgramData")) {
-            $found = Get-ChildItem -Path $ruta -Filter "nginx-*" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
-            if (-not $found) {
-                $found = Get-ChildItem -Path $ruta -Filter "nginx" -Directory -ErrorAction SilentlyContinue | Select-Object -First 1
-            }
-            if ($found) { $tempDir = $found.FullName; break }
-        }
-        if (-not $tempDir) {
-            Write-Host "Error: instalacion Choco fallo." -ForegroundColor Red
-            $ProgressPreference = $viejoProgreso
-            return
-        }
-        if ($tempDir -ne "C:\nginx") {
-            if (Test-Path "C:\nginx") { Remove-Item "C:\nginx" -Recurse -Force }
-            Move-Item -Path $tempDir -Destination "C:\nginx" -Force
-        }
-    } else {
-        $rutaZip = Navegar-Descargar-FTP -Servicio "Nginx"
-        if (-not $rutaZip) { $ProgressPreference = $viejoProgreso; return }
-        Expand-Archive -Path $rutaZip -DestinationPath "C:\" -Force
-        $busqueda = Get-ChildItem -Path "C:\" -Filter "nginx-*" -Directory | Select-Object -First 1
-        if ($busqueda.FullName -ne "C:\nginx") {
-            if (Test-Path "C:\nginx") { Remove-Item "C:\nginx" -Recurse -Force }
-            Move-Item -Path $busqueda.FullName -Destination "C:\nginx" -Force
-        }
+    # PASO 2: Verificar Chocolatey
+    Write-Host "  [2/5] Verificando Chocolatey..." -ForegroundColor Yellow
+    if (-not (Test-Path $chocoExe)) {
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString(
+            'https://community.chocolatey.org/install.ps1'))
     }
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Write-Host "       [OK] Chocolatey listo." -ForegroundColor Green
 
-    $resSSL = Read-Host "Desea activar SSL? [S/N]"
+    # PASO 3: Desinstalar y reinstalar Nginx forzado
+    Write-Host "  [3/5] Reinstalando nginx via Chocolatey (forzado)..." -ForegroundColor Yellow
+    & $chocoExe uninstall nginx -y --limit-output 2>$null | Out-Null
+    Start-Sleep -Seconds 2
+    & $chocoExe install nginx -y --force --limit-output
+    Stop-Service -Name "nginx" -Force -ErrorAction SilentlyContinue
+    sc.exe delete "nginx" 2>$null | Out-Null
+    Write-Host "       [OK] Instalacion de Chocolatey completada." -ForegroundColor Green
+
+    # Localizar la carpeta de nginx
+    $nginxDir = ""
+    foreach ($ruta in @("C:\tools\nginx","C:\nginx","$env:ProgramData\chocolatey\lib\nginx\tools\nginx")) {
+        if (Test-Path "$ruta\nginx.exe") { $nginxDir = $ruta; break }
+    }
+    if (-not $nginxDir) {
+        $found = Get-ChildItem "C:\" -Filter "nginx.exe" -Recurse -Depth 6 -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+        if ($found) { $nginxDir = $found.DirectoryName }
+    }
+    if (-not $nginxDir) {
+        Write-Host "  [!] nginx.exe no encontrado tras instalacion." -ForegroundColor Red
+        return
+    }
+    # Mover a C:\nginx si no esta ahi
+    if ($nginxDir -ne "C:\nginx") {
+        if (Test-Path "C:\nginx") { Remove-Item "C:\nginx" -Recurse -Force }
+        Copy-Item -Path $nginxDir -Destination "C:\nginx" -Recurse -Force
+        $nginxDir = "C:\nginx"
+    }
+    Write-Host "       Nginx en: $nginxDir" -ForegroundColor DarkGray
+
+    # PASO 4: Pedir puerto y SSL
+    Write-Host "  [4/5] Configuracion del servidor..." -ForegroundColor Yellow
+    $Puerto = Obtener-Puerto -Servicio "Nginx"
+    Write-Host "       Puerto elegido: $Puerto" -ForegroundColor DarkGray
+
+    $resSSL = Read-Host "  Desea activar SSL? [S/N]"
     $isSSL  = ($resSSL -match '^[sS]$')
 
+    # Generar certificado si SSL
     if ($isSSL) {
         $opensslExe = "C:\Program Files\OpenSSL-Win64\bin\openssl.exe"
-        if (-not (Test-Path $opensslExe)) { & $chocoExe install openssl -y *>$null }
-        if (-not (Test-Path "$nginxDir\conf")) { New-Item -ItemType Directory -Path "$nginxDir\conf" -Force | Out-Null }
+        if (-not (Test-Path $opensslExe)) {
+            & $chocoExe install openssl -y --limit-output *>$null
+        }
+        if (-not (Test-Path "$nginxDir\conf")) {
+            New-Item -ItemType Directory -Path "$nginxDir\conf" -Force | Out-Null
+        }
         $env:OPENSSL_CONF = "C:\Program Files\OpenSSL-Win64\bin\openssl.cfg"
         & $opensslExe req -x509 -nodes -newkey rsa:2048 `
             -keyout "$nginxDir\conf\server.key" `
             -out    "$nginxDir\conf\server.crt" `
-            -days 365 -subj "/CN=www.reprobados.com" 2>$null
-
-        $puerto80Libre = -not (netstat -ano 2>$null | Select-String ":80 ")
-
-        if ($puerto80Libre) {
-            $nginxConf = "worker_processes 1;`nevents { worker_connections 1024; }`nhttp {`n    include      mime.types;`n    default_type application/octet-stream;`n    sendfile on;`n    keepalive_timeout 65;`n    server {`n        listen 80;`n        server_name www.reprobados.com;`n        return 301 https://`$host:${Puerto}`$request_uri;`n    }`n    server {`n        listen ${Puerto} ssl;`n        server_name www.reprobados.com;`n        ssl_certificate     C:/nginx/conf/server.crt;`n        ssl_certificate_key C:/nginx/conf/server.key;`n        add_header Strict-Transport-Security `"max-age=31536000; includeSubDomains`" always;`n        location / { root html; index index.html index.htm; }`n    }`n}"
-            New-NetFirewallRule -DisplayName "Nginx HTTP 80" -Direction Inbound -LocalPort 80 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
-            Escribir-Resumen "[OK] Nginx: HTTPS puerto $Puerto (HTTP 80 redirige)."
-        } else {
-            Write-Host "  [!] Puerto 80 ocupado. Nginx usara solo HTTPS en $Puerto." -ForegroundColor Yellow
-            $nginxConf = "worker_processes 1;`nevents { worker_connections 1024; }`nhttp {`n    include      mime.types;`n    default_type application/octet-stream;`n    sendfile on;`n    keepalive_timeout 65;`n    server {`n        listen ${Puerto} ssl;`n        server_name www.reprobados.com;`n        ssl_certificate     C:/nginx/conf/server.crt;`n        ssl_certificate_key C:/nginx/conf/server.key;`n        add_header Strict-Transport-Security `"max-age=31536000; includeSubDomains`" always;`n        location / { root html; index index.html index.htm; }`n    }`n}"
-            Escribir-Resumen "[OK] Nginx: HTTPS solo en puerto $Puerto."
-        }
-        New-NetFirewallRule -DisplayName "Nginx HTTPS $Puerto" -Direction Inbound -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
-    } else {
-        $nginxConf = "worker_processes 1;`nevents { worker_connections 1024; }`nhttp {`n    include      mime.types;`n    default_type application/octet-stream;`n    sendfile on;`n    keepalive_timeout 65;`n    server {`n        listen ${Puerto};`n        server_name localhost;`n        location / { root html; index index.html index.htm; }`n    }`n}"
-        Escribir-Resumen "[OK] Nginx: HTTP puro puerto $Puerto."
-        New-NetFirewallRule -DisplayName "Nginx HTTP $Puerto" -Direction Inbound -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+            -days 365 -subj "/CN=www.reprobados.com" 2>&1 | Out-Null
+        Write-Host "       Certificado SSL generado." -ForegroundColor DarkGray
     }
 
+    # Construir nginx.conf
+    $puerto80Libre = -not (netstat -ano 2>$null | Select-String ":80 ")
+
+    if ($isSSL) {
+        if ($puerto80Libre) {
+            $nginxConf = @"
+worker_processes 1;
+events { worker_connections 1024; }
+http {
+    include      mime.types;
+    default_type application/octet-stream;
+    sendfile on;
+    keepalive_timeout 65;
+    server {
+        listen 80;
+        server_name www.reprobados.com;
+        return 301 https://`$host:${Puerto}`$request_uri;
+    }
+    server {
+        listen ${Puerto} ssl;
+        server_name www.reprobados.com;
+        ssl_certificate     C:/nginx/conf/server.crt;
+        ssl_certificate_key C:/nginx/conf/server.key;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        location / { root html; index index.html index.htm; }
+    }
+}
+"@
+            New-NetFirewallRule -DisplayName "Nginx HTTP 80" -Direction Inbound `
+                -LocalPort 80 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+            Escribir-Resumen "[OK] Nginx: HTTPS puerto $Puerto (HTTP 80 redirige)."
+        } else {
+            Write-Host "       Puerto 80 ocupado. Nginx usara solo HTTPS en $Puerto." -ForegroundColor Yellow
+            $nginxConf = @"
+worker_processes 1;
+events { worker_connections 1024; }
+http {
+    include      mime.types;
+    default_type application/octet-stream;
+    sendfile on;
+    keepalive_timeout 65;
+    server {
+        listen ${Puerto} ssl;
+        server_name www.reprobados.com;
+        ssl_certificate     C:/nginx/conf/server.crt;
+        ssl_certificate_key C:/nginx/conf/server.key;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        location / { root html; index index.html index.htm; }
+    }
+}
+"@
+            Escribir-Resumen "[OK] Nginx: HTTPS solo en puerto $Puerto."
+        }
+        New-NetFirewallRule -DisplayName "Nginx HTTPS $Puerto" -Direction Inbound `
+            -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+    } else {
+        $nginxConf = @"
+worker_processes 1;
+events { worker_connections 1024; }
+http {
+    include      mime.types;
+    default_type application/octet-stream;
+    sendfile on;
+    keepalive_timeout 65;
+    server {
+        listen ${Puerto};
+        server_name localhost;
+        location / { root html; index index.html index.htm; }
+    }
+}
+"@
+        New-NetFirewallRule -DisplayName "Nginx HTTP $Puerto" -Direction Inbound `
+            -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
+        Escribir-Resumen "[OK] Nginx: HTTP puro puerto $Puerto."
+    }
+
+    # Escribir nginx.conf sin BOM
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllText("$nginxDir\conf\nginx.conf", $nginxConf, $utf8NoBom)
 
+    # index.html
     if (-not (Test-Path "$nginxDir\html")) { New-Item -ItemType Directory -Path "$nginxDir\html" -Force | Out-Null }
-    $proto    = if ($isSSL) { "HTTPS (Seguro)" } else { "HTTP" }
-    $bgColor  = if ($isSSL) { "#115c2a" } else { "#2c3e50" }
-    $version  = (& "$nginxDir\nginx.exe" -v 2>&1) -replace '.*nginx/', ''
-    "<html><body style='font-family:Arial;text-align:center;background-color:${bgColor};color:white;padding-top:50px;'><h1>NGINX</h1><p><b>Protocolo:</b> $proto</p><p><b>Puerto:</b> $Puerto</p></body></html>" | Set-Content "$nginxDir\html\index.html" -Force
+    $proto   = if ($isSSL) { "HTTPS (Seguro)" } else { "HTTP" }
+    $bgColor = if ($isSSL) { "#115c2a" } else { "#2c3e50" }
+    @"
+<html><body style='font-family:Arial;text-align:center;background-color:${bgColor};color:white;padding-top:50px;'>
+<div style='background:rgba(0,0,0,0.5);display:inline-block;padding:40px;border-radius:20px;border:3px solid white;'>
+<h1>SERVIDOR WEB: NGINX</h1><hr style='width:80%;margin:20px auto;'>
+<p><b>Protocolo:</b> $proto</p><p><b>Puerto:</b> $Puerto</p>
+<p>www.reprobados.com</p></div></body></html>
+"@ | Set-Content "$nginxDir\html\index.html" -Force
 
+    # Validar configuracion
     $test = & "$nginxDir\nginx.exe" -t -p "$nginxDir" 2>&1
     if ($LASTEXITCODE -ne 0) {
         Write-Host "  [!] nginx.conf invalido:" -ForegroundColor Red
         $test | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
-        $ProgressPreference = $viejoProgreso
         return
     }
+    Write-Host "       [OK] nginx.conf valido." -ForegroundColor Green
 
+    # PASO 5: Lanzar Nginx
+    Write-Host "  [5/5] Lanzando Nginx en puerto $Puerto..." -ForegroundColor Yellow
     $proc = Start-Process -FilePath "$nginxDir\nginx.exe" -WorkingDirectory $nginxDir -PassThru
     Start-Sleep -Seconds 2
 
     if ($proc.HasExited) {
         Write-Host "  [!] Nginx termino de inmediato." -ForegroundColor Red
-        Get-Content "$nginxDir\logs\error.log" -Tail 5 -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
-        $ProgressPreference = $viejoProgreso
+        if (Test-Path "$nginxDir\logs\error.log") {
+            Get-Content "$nginxDir\logs\error.log" -Tail 10 |
+                ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        }
         return
     }
 
     $ok = Esperar-Puerto -Puerto $Puerto -intentos 15
     if ($ok) {
-        Write-Host "[OK] Nginx corriendo en puerto $Puerto" -ForegroundColor Green
+        Write-Host ""
+        Write-Host "  ============================================" -ForegroundColor Green
+        Write-Host "  [OK] NGINX CORRIENDO" -ForegroundColor Green
+        $protoLow = if ($isSSL) { "https" } else { "http" }
+        Write-Host "  URL: ${protoLow}://192.168.56.102:$Puerto" -ForegroundColor Green
+        Write-Host "  ============================================" -ForegroundColor Green
     } else {
-        Write-Host "[!] Nginx no responde en puerto $Puerto." -ForegroundColor Red
+        Write-Host "  [!] Nginx no responde en puerto $Puerto." -ForegroundColor Red
+        if (Test-Path "$nginxDir\logs\error.log") {
+            Get-Content "$nginxDir\logs\error.log" -Tail 10 |
+                ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+        }
     }
-
-    $ProgressPreference = $viejoProgreso
 }
 
-# =============================================================================
-# INSTALAR IIS WEB
-# FIXES APLICADOS:
-#   1. iisreset /restart antes de crear el sitio
-#   2. Instalar Web-Asp-Net45 para activar el pipeline completo de IIS
-#   3. Crear sitio en puerto temporal y luego agregar binding HTTPS
-#   4. Vincular certificado con formato "0.0.0.0!PUERTO"
-#   5. Usar appcmd.exe para forzar inicio del sitio
-#   6. Timeout de 30s en Esperar-Puerto
-# =============================================================================
 function Instalar-IIS-Web {
     Write-Host "`n--- INSTALANDO IIS WEB (REINSTALACION FORZADA) ---" -ForegroundColor Cyan
 
