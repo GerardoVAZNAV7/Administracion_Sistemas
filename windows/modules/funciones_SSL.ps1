@@ -58,7 +58,9 @@ function Limpiar-Apache {
         Stop-Service  -Name $svc -Force -ErrorAction SilentlyContinue
         sc.exe delete $svc | Out-Null
     }
-    Remove-Item -Path "C:\Apache24" -Recurse -Force -ErrorAction SilentlyContinue
+    # IMPORTANTE: NO borrar la carpeta de Chocolatey (ProgramData)
+    # Solo borramos C:\Apache24 (copia de trabajo) y C:\tools\apache24
+    Remove-Item -Path "C:\Apache24"       -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -Path "C:\tools\apache24" -Recurse -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
 }
@@ -134,10 +136,23 @@ function Instalar-Apache {
         "$env:APPDATA\Apache24",
         "C:\Apache24",
         "C:\tools\apache24",
-        "C:\ProgramData\chocolatey\lib\apache-httpd\tools\Apache24"
+        "C:\ProgramData\chocolatey\lib\apache-httpd\tools\Apache24",
+        "C:\ProgramData\chocolatey\lib\apache-httpd\tools\Apache24\bin\..\",
+        "C:\ProgramData\chocolatey\lib\apache-httpd\Apache24"
     )
     foreach ($ruta in $rutasBusqueda) {
         if (Test-Path "$ruta\bin\httpd.exe") { $tempDir = $ruta; break }
+    }
+
+    # Busqueda exhaustiva en ProgramData (Chocolatey puede variar la ruta)
+    if (-not $tempDir) {
+        Write-Host "  Buscando en ProgramData\chocolatey..." -ForegroundColor DarkGray
+        $found = Get-ChildItem "C:\ProgramData\chocolatey" -Filter "httpd.exe" -Recurse -Depth 8 -ErrorAction SilentlyContinue |
+                 Select-Object -First 1
+        if ($found) {
+            $tempDir = $found.DirectoryName -replace "\\bin$",""
+            Write-Host "  Encontrado en: $tempDir" -ForegroundColor Green
+        }
     }
 
     if (-not $tempDir) {
@@ -436,110 +451,176 @@ function Instalar-Nginx {
 #   6. Timeout de 30s en Esperar-Puerto
 # =============================================================================
 function Instalar-IIS-Web {
-    Write-Host "`n--- INSTALANDO IIS WEB ---" -ForegroundColor Cyan
-    Limpiar-IIS
+    Write-Host "`n--- INSTALANDO IIS WEB (REINSTALACION FORZADA) ---" -ForegroundColor Cyan
 
-    $Puerto = Obtener-Puerto -Servicio "IIS"
-    Write-Host "  [OK] Puerto elegido: $Puerto" -ForegroundColor DarkGray
+    # =========================================================
+    # PASO 1: DESINSTALAR IIS COMPLETAMENTE Y REINSTALAR
+    # =========================================================
+    Write-Host "  [1/7] Desinstalando IIS completamente..." -ForegroundColor Yellow
+    iisreset /stop 2>&1 | Out-Null
+    Stop-Service -Name W3SVC,WAS -Force -ErrorAction SilentlyContinue
+    Uninstall-WindowsFeature -Name Web-Server -IncludeManagementTools -ErrorAction SilentlyContinue | Out-Null
+    Start-Sleep -Seconds 3
 
-    Write-Host "  Instalando caracteristicas de IIS..." -ForegroundColor DarkGray
-    Install-WindowsFeature -Name Web-Server,Web-Common-Http,Web-Static-Content,Web-Http-Logging,Web-Security `
-        -IncludeManagementTools | Out-Null
+    Write-Host "  [2/7] Reinstalando IIS limpio..." -ForegroundColor Yellow
+    Install-WindowsFeature -Name Web-Server,Web-Common-Http,Web-Static-Content,`
+Web-Http-Logging,Web-Security,Web-Mgmt-Console -IncludeManagementTools | Out-Null
+    Start-Sleep -Seconds 5
 
-    # FIX 1: reiniciar IIS con estado limpio antes de crear el sitio
-    Write-Host "  Reiniciando IIS (estado limpio)..." -ForegroundColor DarkGray
-    iisreset /restart 2>&1 | Out-Null
-    Start-Sleep -Seconds 8
+    Write-Host "  [3/7] Arrancando servicios IIS..." -ForegroundColor Yellow
+    Start-Service -Name WAS   -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
+    Start-Service -Name W3SVC -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 3
 
-    Import-Module WebAdministration -ErrorAction SilentlyContinue
+    Import-Module WebAdministration -Force -ErrorAction Stop
 
-    $resSSL   = Read-Host "Desea activar SSL? [S/N]"
+    # =========================================================
+    # PASO 2: PEDIR CONFIGURACION AL USUARIO
+    # =========================================================
+    $Puerto   = Obtener-Puerto -Servicio "IIS"
+    $resSSL   = Read-Host "  Desea activar SSL? [S/N]"
     $isSSL    = ($resSSL -match '^[sS]$')
     $siteName = "SitioIIS_Practica7_$Puerto"
     $sitePath = "C:\inetpub\wwwroot\$siteName"
 
-    if (Test-Path $sitePath) { Remove-Item -Path $sitePath -Recurse -Force }
-    New-Item -ItemType Directory -Force -Path $sitePath | Out-Null
+    Write-Host "  [OK] Puerto: $Puerto  |  SSL: $isSSL" -ForegroundColor DarkGray
+
+    # =========================================================
+    # PASO 3: DETENER DEFAULT WEB SITE
+    # =========================================================
+    Write-Host "  [4/7] Deteniendo Default Web Site..." -ForegroundColor Yellow
+    if (Get-Website -Name "Default Web Site" -ErrorAction SilentlyContinue) {
+        Stop-Website -Name "Default Web Site" -ErrorAction SilentlyContinue
+    }
+
+    # =========================================================
+    # PASO 4: CREAR CARPETA Y CONTENIDO WEB
+    # =========================================================
+    if (Test-Path $sitePath) { Remove-Item $sitePath -Recurse -Force }
+    New-Item -ItemType Directory -Path $sitePath -Force | Out-Null
+
+    $proto = if ($isSSL) { "HTTPS" } else { "HTTP" }
+    @"
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>IIS $proto - Puerto $Puerto</title></head>
+<body style="font-family:Arial;text-align:center;background:#1a3c5c;color:white;padding-top:80px;">
+  <div style="display:inline-block;background:rgba(0,0,0,0.5);padding:40px;border-radius:16px;">
+    <h1>IIS ACTIVO</h1>
+    <p><b>Protocolo:</b> $proto</p>
+    <p><b>Puerto:</b> $Puerto</p>
+    <p>www.reprobados.com - Windows Server 2022</p>
+  </div>
+</body>
+</html>
+"@ | Set-Content "$sitePath\index.html" -Encoding UTF8 -Force
+
+    # =========================================================
+    # PASO 5: CREAR SITIO IIS
+    # =========================================================
+    Write-Host "  [5/7] Creando sitio IIS '$siteName'..." -ForegroundColor Yellow
 
     if ($isSSL) {
-        # FIX 2: instalar URL Rewrite si no existe
-        $chocoExe = "C:\ProgramData\chocolatey\bin\choco.exe"
-        if (-not (Test-Path $chocoExe)) {
-            Set-ExecutionPolicy Bypass -Scope Process -Force
-            Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-        }
-        & $chocoExe install urlrewrite -y --force *>$null
-        iisreset /restart 2>&1 | Out-Null
-        Start-Sleep -Seconds 5
-
-        "<h1 style='font-family:Arial;text-align:center;color:green'>IIS HTTPS Activo - Puerto $Puerto</h1><p style='text-align:center'>www.reprobados.com - SSL Habilitado</p>" | Set-Content "$sitePath\index.html" -Force
-
-        # FIX 3: generar certificado con SAN (Subject Alternative Name)
-        Write-Host "  Generando certificado SSL (con SAN)..." -ForegroundColor Cyan
+        # Generar certificado autofirmado
+        Write-Host "       Generando certificado SSL..." -ForegroundColor DarkGray
         $cert = New-SelfSignedCertificate `
             -DnsName "www.reprobados.com","reprobados.com","localhost" `
             -CertStoreLocation "cert:\LocalMachine\My" `
             -NotAfter (Get-Date).AddYears(1)
-        Write-Host "  Thumbprint: $($cert.Thumbprint)" -ForegroundColor DarkGray
+        Write-Host "       Thumbprint: $($cert.Thumbprint)" -ForegroundColor DarkGray
 
-        # FIX 4: crear sitio con puerto temporal, luego agregar HTTPS
-        if (Get-Website -Name $siteName -ErrorAction SilentlyContinue) { Remove-Website -Name $siteName }
-        New-Website -Name $siteName -Port 19999 -PhysicalPath $sitePath -Force | Out-Null
-        New-WebBinding -Name $siteName -Protocol "https" -Port $Puerto -IPAddress "*" -SslFlags 0
+        # Crear sitio en puerto HTTPS directo (sin puerto temporal)
+        New-Website -Name $siteName -Port $Puerto -PhysicalPath $sitePath `
+            -Ssl -Force | Out-Null
 
-        # FIX 5: vincular certificado con clave correcta
-        $bindingPath = "IIS:\SslBindings\0.0.0.0!$Puerto"
-        if (Test-Path $bindingPath) { Remove-Item $bindingPath -Force }
-        $cert | New-Item $bindingPath -Force | Out-Null
-        Write-Host "  [OK] Certificado vinculado al puerto $Puerto" -ForegroundColor Green
+        # Vincular certificado
+        $bindPath = "IIS:\SslBindings\0.0.0.0!$Puerto"
+        if (Test-Path $bindPath) { Remove-Item $bindPath -Force }
+        $cert | New-Item $bindPath -Force | Out-Null
+        Write-Host "       Certificado vinculado al puerto $Puerto" -ForegroundColor DarkGray
 
-        # Remover binding temporal
-        Remove-WebBinding -Name $siteName -Protocol "http" -Port 19999 -ErrorAction SilentlyContinue
-
+        # Firewall
         New-NetFirewallRule -DisplayName "IIS HTTPS $Puerto" -Direction Inbound `
-            -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
-        Escribir-Resumen "[OK] IIS: HTTPS puerto $Puerto"
+            -LocalPort $Puerto -Protocol TCP -Action Allow `
+            -ErrorAction SilentlyContinue | Out-Null
+
+        Escribir-Resumen "[OK] IIS HTTPS puerto $Puerto"
 
     } else {
-        "<h1 style='font-family:Arial;text-align:center'>IIS HTTP Activo - Puerto $Puerto</h1><p style='text-align:center'>www.reprobados.com</p>" | Set-Content "$sitePath\index.html" -Force
-
-        if (Get-Website -Name $siteName -ErrorAction SilentlyContinue) { Remove-Website -Name $siteName }
         New-Website -Name $siteName -Port $Puerto -PhysicalPath $sitePath -Force | Out-Null
 
         New-NetFirewallRule -DisplayName "IIS HTTP $Puerto" -Direction Inbound `
-            -LocalPort $Puerto -Protocol TCP -Action Allow -ErrorAction SilentlyContinue | Out-Null
-        Escribir-Resumen "[OK] IIS: HTTP puro puerto $Puerto."
+            -LocalPort $Puerto -Protocol TCP -Action Allow `
+            -ErrorAction SilentlyContinue | Out-Null
+
+        Escribir-Resumen "[OK] IIS HTTP puerto $Puerto"
     }
 
-    # FIX 6: iniciar sitio con multiple metodos para mayor confiabilidad
-    Write-Host "  Iniciando sitio IIS..." -ForegroundColor DarkGray
-    Start-Service -Name W3SVC -ErrorAction SilentlyContinue
-    Start-WebItem "IIS:\Sites\$siteName" -ErrorAction SilentlyContinue
+    # =========================================================
+    # PASO 6: ARRANCAR SITIO Y APPLICATION POOL
+    # =========================================================
+    Write-Host "  [6/7] Arrancando sitio y Application Pool..." -ForegroundColor Yellow
+
+    # Arrancar el Application Pool
+    $poolName = (Get-Website -Name $siteName -ErrorAction SilentlyContinue).ApplicationPool
+    if ($poolName) {
+        Start-WebAppPool -Name $poolName -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 2
+        Write-Host "       Pool '$poolName' iniciado." -ForegroundColor DarkGray
+    }
+
+    # Arrancar el sitio por 3 métodos distintos
+    Start-Website -Name $siteName -ErrorAction SilentlyContinue
+    Start-WebItem  "IIS:\Sites\$siteName" -ErrorAction SilentlyContinue
     $appcmd = "$env:SystemRoot\system32\inetsrv\appcmd.exe"
     if (Test-Path $appcmd) {
         & $appcmd start site /site.name:"$siteName" 2>&1 | Out-Null
     }
 
+    Start-Sleep -Seconds 3
+
+    # Mostrar estado del sitio
+    $estado = (Get-Website -Name $siteName -ErrorAction SilentlyContinue).State
+    Write-Host "       Estado del sitio: $estado" -ForegroundColor DarkGray
+
+    # =========================================================
+    # PASO 7: VERIFICAR PUERTO
+    # =========================================================
+    Write-Host "  [7/7] Verificando puerto $Puerto..." -ForegroundColor Yellow
     $ok = Esperar-Puerto -Puerto $Puerto -intentos 30
 
     if ($ok) {
         Write-Host ""
-        Write-Host "  [OK] IIS corriendo en puerto $Puerto" -ForegroundColor Green
-        $proto = if ($isSSL) { "https" } else { "http" }
-        Write-Host "  Abre en navegador: ${proto}://192.168.56.102:$Puerto" -ForegroundColor Cyan
+        Write-Host "  ================================================" -ForegroundColor Green
+        Write-Host "  [OK] IIS CORRIENDO EXITOSAMENTE" -ForegroundColor Green
+        Write-Host "  Protocolo : $proto" -ForegroundColor Green
+        Write-Host "  Puerto    : $Puerto" -ForegroundColor Green
+        $protoLower = $proto.ToLower()
+        Write-Host "  URL       : ${protoLower}://192.168.56.102:$Puerto" -ForegroundColor Green
+        Write-Host "  ================================================" -ForegroundColor Green
     } else {
         Write-Host ""
-        Write-Host "  [!] IIS no responde en puerto $Puerto" -ForegroundColor Red
-        Write-Host "  Ejecuta este comando para diagnosticar:" -ForegroundColor Yellow
-        Write-Host "    Get-WebSite -Name '$siteName' | Select Name,State,PhysicalPath" -ForegroundColor DarkGray
-        Write-Host "    Get-WebBinding -Name '$siteName'" -ForegroundColor DarkGray
-        Write-Host "    netstat -ano | findstr :$Puerto" -ForegroundColor DarkGray
+        Write-Host "  [!] Puerto $Puerto no responde. Diagnostico:" -ForegroundColor Red
+
+        Write-Host "  --- Sitios ---" -ForegroundColor Yellow
+        Get-Website -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "      $($_.Name) -> $($_.State)" -ForegroundColor Yellow
+        }
+
+        Write-Host "  --- Pools ---" -ForegroundColor Yellow
+        Get-WebConfiguration "system.applicationHost/applicationPools/add" |
+            ForEach-Object { Write-Host "      $($_.name) -> $($_.state)" -ForegroundColor Yellow }
+
+        Write-Host "  --- netstat puerto $Puerto ---" -ForegroundColor Yellow
+        netstat -ano 2>$null | Select-String ":$Puerto " |
+            ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
+
+        Write-Host ""
+        Write-Host "  Abre IIS Manager y verifica que '$siteName' este en Started." -ForegroundColor Cyan
     }
 }
 
-# =============================================================================
-# IIS FTP
-# =============================================================================
 function Instalar-IIS-FTP {
     Write-Host "`n--- INSTALANDO IIS FTP ---" -ForegroundColor Cyan
     Install-WindowsFeature Web-FTP-Server -IncludeManagementTools | Out-Null
