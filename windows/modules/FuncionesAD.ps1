@@ -68,9 +68,9 @@ function Importar-UsuariosCSV {
 
     $usuarios = Import-Csv $rutaCSV
     foreach ($u in $usuarios) {
-        $nUsuario = $u.usuario
-        $nPass = $u.pass
-        $nDepto = $u.departamento
+        $nUsuario = $u.Usuario
+        $nPass = $u.Contrasena
+        $nDepto = $u.Departamento
 
         $ouPath = if ($nDepto -eq "Cuates") { "OU=Cuates,$dominioDN" } else { "OU=No Cuates,$dominioDN" }
         [byte[]]$logonHoursToApply = if ($nDepto -eq "Cuates") { $horasCuates } else { $horasNoCuates }
