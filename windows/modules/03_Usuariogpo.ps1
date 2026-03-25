@@ -106,25 +106,14 @@ foreach ($user in $usuarios) {
     }
 
     $contrasenaSegura = ConvertTo-SecureString $user.Contrasena -AsPlainText -Force
+    $carpetaUsuario   = "$carpetasBase\$($user.Usuario)"
 
-    # Crear carpeta personal del usuario
-    $carpetaUsuario = "$carpetasBase\$($user.Usuario)"
-    if (-not (Test-Path $carpetaUsuario)) {
-        New-Item -ItemType Directory -Path $carpetaUsuario -Force | Out-Null
+    # ── PRIMERO crear el usuario en AD ────────────────────────────────────────
+    # RAZON DEL FIX: Los permisos NTFS se asignan usando el SID del usuario.
+    # Si el usuario no existe aun en AD, Windows no puede resolver
+    # "PRACTICA\jperez" a un SID → IdentityNotMappedException.
+    # Solucion: crear el usuario PRIMERO, luego asignar permisos a su carpeta.
 
-        # Dar control total solo al usuario sobre su propia carpeta
-        $aclUser = Get-Acl $carpetaUsuario
-        $aclUser.SetAccessRuleProtection($true, $false)
-        $reglaAdmin2 = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            "BUILTIN\Administrators", "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
-        $reglaUsuario = New-Object System.Security.AccessControl.FileSystemAccessRule(
-            "PRACTICA\$($user.Usuario)", "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
-        $aclUser.AddAccessRule($reglaAdmin2)
-        $aclUser.AddAccessRule($reglaUsuario)
-        Set-Acl -Path $carpetaUsuario -AclObject $aclUser
-    }
-
-    # Crear el usuario en AD
     if (-not (Get-ADUser -Filter "SamAccountName -eq '$($user.Usuario)'" -ErrorAction SilentlyContinue)) {
         try {
             New-ADUser `
@@ -146,13 +135,45 @@ foreach ($user in $usuarios) {
             # Agregar al grupo correspondiente
             Add-ADGroupMember -Identity $grupoDestino -Members $user.Usuario
 
-            Write-Ok "Usuario '$($user.Usuario)' creado en OU '$($user.Departamento)' y agregado a '$grupoDestino'."
+            Write-Ok "Usuario '$($user.Usuario)' creado en OU '$($user.Departamento)'."
         } catch {
             Write-Err "Error creando usuario '$($user.Usuario)': $($_.Exception.Message)"
+            continue   # Saltar al siguiente usuario si este fallo
         }
     } else {
         Write-Info "Usuario '$($user.Usuario)' ya existe. Verificando grupo..."
         Add-ADGroupMember -Identity $grupoDestino -Members $user.Usuario -ErrorAction SilentlyContinue
+    }
+
+    # ── DESPUES crear la carpeta y asignar permisos ───────────────────────────
+    # Ahora el usuario YA existe en AD y su SID puede resolverse correctamente.
+    if (-not (Test-Path $carpetaUsuario)) {
+        New-Item -ItemType Directory -Path $carpetaUsuario -Force | Out-Null
+    }
+
+    try {
+        # Obtener el SID del usuario directamente desde AD (mas confiable que el nombre)
+        $sidUsuario = (Get-ADUser -Identity $user.Usuario).SID
+
+        $aclUser = Get-Acl $carpetaUsuario
+        $aclUser.SetAccessRuleProtection($true, $false)
+
+        # Usar SID directamente evita problemas de resolucion de nombre
+        $reglaAdmin2 = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            [System.Security.Principal.SecurityIdentifier]"S-1-5-32-544",
+            "FullControl", "ContainerInherit,ObjectInherit", "None", "Allow")
+
+        $reglaUsuario = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            $sidUsuario,
+            "Modify", "ContainerInherit,ObjectInherit", "None", "Allow")
+
+        $aclUser.AddAccessRule($reglaAdmin2)
+        $aclUser.AddAccessRule($reglaUsuario)
+        Set-Acl -Path $carpetaUsuario -AclObject $aclUser
+        Write-Ok "  Carpeta y permisos configurados: $carpetaUsuario"
+    } catch {
+        Write-Err "  Error aplicando permisos en '$carpetaUsuario': $($_.Exception.Message)"
+        # No es critico: la carpeta existe, solo los permisos fallaron
     }
 }
 

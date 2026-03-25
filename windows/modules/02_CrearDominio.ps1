@@ -3,8 +3,8 @@
 # 02_crear_dominio.ps1
 # PRACTICA 8 - Promover el servidor a Domain Controller
 #
-# EJECUTAR DESPUES de 01_setup_servidor.ps1 (y reinicio si fue necesario)
-# El servidor SE REINICIARA automaticamente al finalizar este script
+# FIX: NoRebootOnCompletion=$true para poder configurar DNS forwarders
+#      ANTES del reinicio, asi el servidor conserva acceso a internet.
 # =============================================================================
 
 #Requires -Module ADDSDeployment
@@ -19,22 +19,16 @@ Write-Host "`n============================================" -ForegroundColor Mag
 Write-Host "   PRACTICA 8 - CREACION DEL DOMINIO        " -ForegroundColor Magenta
 Write-Host "============================================`n" -ForegroundColor Magenta
 
-# ── Configuracion del dominio ─────────────────────────────────────────────────
 $dominioNombre  = "practica.local"
 $dominioNetbios = "PRACTICA"
-
-# IMPORTANTE: Esta sera la contrasena del modo DSRM (recuperacion de AD)
-# Guardala en un lugar seguro
 $contrasenaSegura = ConvertTo-SecureString "DSRM@Practica8!" -AsPlainText -Force
 
 Write-Paso "1" "Configuracion del nuevo dominio..."
 Write-Info "Nombre FQDN: $dominioNombre"
 Write-Info "NetBIOS: $dominioNetbios"
-Write-Info "Nivel funcional: Windows Server 2016"
 
 Write-Paso "2" "Instalando el nuevo bosque de Active Directory..."
-Write-Info "El servidor se reiniciara automaticamente al terminar."
-Write-Info "Espera aproximadamente 3-5 minutos..."
+Write-Info "Usando -NoRebootOnCompletion para configurar DNS antes de reiniciar."
 
 Import-Module ADDSDeployment
 
@@ -47,12 +41,37 @@ Install-ADDSForest `
     -ForestMode "WinThreshold" `
     -InstallDns:$true `
     -LogPath "C:\Windows\NTDS" `
-    -NoRebootOnCompletion:$false `
+    -NoRebootOnCompletion:$true `
     -SysvolPath "C:\Windows\SYSVOL" `
     -SafeModeAdministratorPassword $contrasenaSegura `
     -Force:$true
 
-# NOTA: El servidor se reiniciara aqui automaticamente.
-# Despues del reinicio, inicia sesion con: PRACTICA\Administrator
-# y ejecuta el script 03_usuarios_gpo.ps1
-Write-Host "`nEl servidor se esta reiniciando..." -ForegroundColor Yellow
+Write-Ok "Bosque AD instalado. Configurando DNS antes de reiniciar..."
+
+# ── FIX INTERNET: Configurar DNS Forwarders ───────────────────────────────────
+# RAZON DEL PROBLEMA:
+# Al volverse DC, el servidor cambia su DNS propio a 127.0.0.1.
+# Para nombres locales (practica.local): los resuelve el. BIEN.
+# Para nombres de internet (google.com): NO sabe → sin internet.
+#
+# SOLUCION: Forwarders = servidores externos a los que preguntar
+# cuando el servidor local no sabe la respuesta.
+
+Write-Paso "3" "Configurando DNS Forwarders (fix acceso a internet)..."
+
+try {
+    Import-Module DnsServer -ErrorAction Stop
+    Set-DnsServerForwarder -IPAddress "8.8.8.8","8.8.4.4","1.1.1.1" -PassThru | Out-Null
+    Write-Ok "Forwarders configurados: 8.8.8.8 (Google) | 1.1.1.1 (Cloudflare)"
+    Write-Ok "Internet funcionara correctamente despues del reinicio."
+} catch {
+    Write-Info "Configura forwarders manualmente despues del reinicio:"
+    Write-Info "  dnsmgmt.msc → SERVIDOR-DC → Properties → Forwarders → 8.8.8.8, 1.1.1.1"
+}
+
+Write-Paso "4" "Reiniciando el servidor en 10 segundos..."
+Write-Host "  Despues: inicia sesion como PRACTICA\Administrator" -ForegroundColor Yellow
+Write-Host "  Luego ejecuta: .\03_usuarios_gpo.ps1" -ForegroundColor Yellow
+
+Start-Sleep -Seconds 10
+Restart-Computer -Force

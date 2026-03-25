@@ -1,24 +1,3 @@
-#!/bin/bash
-# =============================================================================
-# setup_repositorio_ftp.sh
-# Propósito: Preparar el servidor FTP de Fedora para la Práctica 7
-#
-# Este script hace TODO lo siguiente:
-#   1. Instala vsftpd si no está instalado
-#   2. Crea el usuario "danger" con contraseña "Gerardo1234!!"
-#   3. Crea la estructura de carpetas del repositorio FTP
-#   4. Descarga los archivos RPM necesarios (Apache, Nginx, Tomcat, vsftpd)
-#   5. Genera los archivos .sha256 de cada instalador
-#   6. Configura vsftpd para que el usuario danger acceda al repositorio
-#   7. Abre los puertos en el firewall
-#
-# USO:
-#   sudo bash setup_repositorio_ftp.sh
-#
-# NOTA SOBRE LAS DESCARGAS:
-#   Los archivos se descargan directo de los repositorios oficiales de Fedora.
-#   Necesitas conexión a internet para que funcione.
-# =============================================================================
 
 set -e   # Si algo falla, el script se detiene inmediatamente
 
@@ -85,16 +64,6 @@ ok "/sbin/nologin registrado en /etc/shells."
 # =============================================================================
 info "PASO 3: Creando estructura del repositorio FTP..."
 
-# La estructura que necesita mainSSL.sh es:
-#   /srv/ftp/http/Linux/Apache/
-#   /srv/ftp/http/Linux/Nginx/
-#   /srv/ftp/http/Linux/Tomcat/
-#   /srv/ftp/http/Linux/vsftpd/
-#
-# El home de vsftpd con chroot apuntará a /home/danger
-# Dentro creamos un symlink/bind mount a /srv/ftp
-# para que "danger" vea la estructura completa
-
 REPO_BASE="/srv/ftp/http/Linux"
 
 mkdir -p "$REPO_BASE/Apache"
@@ -120,24 +89,7 @@ chmod -R 755            "$REPO_BASE"
 
 ok "Permisos configurados correctamente."
 
-# =============================================================================
-# PASO 4: DESCARGAR LOS INSTALADORES
-# =============================================================================
-# ─────────────────────────────────────────────────────────────────────────────
-# ¿DE DÓNDE SE DESCARGAN?
-#
-# Fedora publica los RPM en el repositorio oficial:
-#   https://dl.fedoraproject.org/pub/fedora/linux/releases/42/Everything/x86_64/os/Packages/
-#
-# También puedes usar dnf download para descargar sin instalar:
-#   dnf download httpd       -> descarga el RPM del Apache de tu versión de Fedora
-#   dnf download nginx       -> descarga el RPM de Nginx
-#   dnf download tomcat      -> descarga el RPM de Tomcat
-#   dnf download vsftpd      -> descarga el RPM de vsftpd
-#
-# Esto es MÁS CONFIABLE que un URL fijo porque dnf ya sabe qué versión
-# es compatible con tu sistema.
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 info "PASO 4: Descargando instaladores RPM..."
 info "        (Usando 'dnf download' — descarga sin instalar)"
@@ -156,9 +108,6 @@ descargar_rpm() {
 
     cd "$TMP_DOWNLOAD"
 
-    # dnf download: descarga el RPM sin instalarlo
-    # --resolve: incluye las dependencias (útil si quieres instalar offline)
-    # Sin --resolve: solo descarga el paquete principal (más limpio para el repo)
     if dnf download "$paquete" --destdir="$TMP_DOWNLOAD" &>/dev/null; then
         # Mover el RPM descargado a la carpeta del repositorio
         local archivo_rpm
@@ -187,8 +136,7 @@ descargar_rpm() {
     fi
 }
 
-# Función de respaldo: descargar directamente desde el repo de Fedora
-# Se usa si dnf download no funciona
+
 _descargar_con_curl() {
     local paquete=$1
     local destino=$2
@@ -248,23 +196,6 @@ info "PASO 6: Configurando vsftpd..."
 [[ -f /etc/vsftpd/vsftpd.conf ]] && \
     cp /etc/vsftpd/vsftpd.conf /etc/vsftpd/vsftpd.conf.bak_setup
 
-# ─────────────────────────────────────────────────────────────────────────────
-# EXPLICACIÓN de las opciones clave de vsftpd.conf:
-#
-# anonymous_enable=NO     → Los anónimos NO pueden acceder al repositorio
-#                           (solo el usuario "danger" autenticado)
-# local_enable=YES        → Permite login con usuarios del sistema Linux
-# write_enable=YES        → Permite subir archivos al FTP
-#                           (necesario para poder agregar instaladores)
-# chroot_local_user=YES   → El usuario queda "encerrado" en su home (/srv/ftp)
-#                           No puede navegar hacia / ni ver otros directorios
-# allow_writeable_chroot  → Sin esto, vsftpd rechaza el chroot si el home
-#                           es escribible. Como /srv/ftp es de root (755),
-#                           esta opción no es estrictamente necesaria pero
-#                           la dejamos por si acaso.
-# pasv_enable=YES         → Modo pasivo: el cliente abre conexiones de datos
-#                           (necesario cuando hay NAT/firewall entre cliente y server)
-# ─────────────────────────────────────────────────────────────────────────────
 
 cat > /etc/vsftpd/vsftpd.conf << 'VSFTPD_CONF'
 # ── Autenticación ────────────────────────────────────────────────────────────
