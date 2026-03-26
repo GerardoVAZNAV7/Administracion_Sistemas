@@ -96,4 +96,85 @@ function Configurar-GPO-Logoff {
     Set-GPRegistryValue -Name $gpoName -Key "HKLM\System\CurrentControlSet\Services\LanManServer\Parameters" -ValueName "enableforcedlogoff" -Type DWord -Value 1 | Out-Null
 }
 
-# (Las funciones Configurar-FSRM y Configurar-AppLocker no requieren cambios de dominio, se mantienen igual)
+function Configurar-FSRM {
+    Write-Host "Configurando FSRM: Cuotas por Usuario (10MB y 5MB)..." -ForegroundColor Cyan
+    
+    $rutaBase = "C:\Perfiles"
+    $rutaCuates = "C:\Perfiles\Cuates"
+    $rutaNoCuates = "C:\Perfiles\NoCuates"
+
+    # 1. Asegurar directorios
+    if (-not (Test-Path $rutaCuates)) { New-Item -Path $rutaCuates -ItemType Directory -Force | Out-Null }
+    if (-not (Test-Path $rutaNoCuates)) { New-Item -Path $rutaNoCuates -ItemType Directory -Force | Out-Null }
+
+    # 2. LIMPIEZA TOTAL
+    & dirquota quota delete /path:$rutaBase /quiet /recursive 2>$null
+    & dirquota autoquota delete /path:$rutaBase /quiet /recursive 2>$null
+
+    # 3. APLICAR AUTO-CUOTAS
+    Write-Host "Estableciendo Auto-Cuotas en carpetas padre..." -ForegroundColor Yellow
+    & dirquota autoquota add /path:$rutaCuates /limit:10mb /type:hard | Out-Null
+    & dirquota autoquota add /path:$rutaNoCuates /limit:5mb /type:hard | Out-Null
+
+    # 4. APLICAR CUOTAS A CARPETAS EXISTENTES
+    Write-Host "Sincronizando cuotas con carpetas de usuarios actuales..." -ForegroundColor Yellow
+    
+    Get-ChildItem $rutaCuates -Directory | ForEach-Object {
+        $pathUser = $_.FullName
+        & dirquota quota add /path:"$pathUser" /limit:10mb /type:hard | Out-Null
+    }
+
+    Get-ChildItem $rutaNoCuates -Directory | ForEach-Object {
+        $pathUser = $_.FullName
+        & dirquota quota add /path:"$pathUser" /limit:5mb /type:hard | Out-Null
+    }
+
+    # 5. Bloqueo de extensiones (Screening)
+    Get-FsrmFileScreen -Path $rutaBase -ErrorAction SilentlyContinue | Remove-FsrmFileScreen -Confirm:$false
+    New-FsrmFileScreen -Path $rutaBase -IncludeGroup "Executable Files","Audio and Video Files" -Active | Out-Null
+
+    Write-Host "FSRM: Cuotas de usuario configuradas y activas." -ForegroundColor Green
+}
+
+function Configurar-AppLocker {
+    Write-Host "Configurando AppLocker por Hash y Reglas por Defecto..." -ForegroundColor Cyan
+    
+    Stop-Service -Name AppIDSvc -Force -ErrorAction SilentlyContinue
+
+    $xmlSalvavidas = @"
+<AppLockerPolicy Version="1">
+  <RuleCollection Type="Exe" EnforcementMode="Enabled">
+    <FilePathRule Id="921cc481-6e17-4653-8f75-050b80acca20" Name="Permitir Program Files" Description="Regla por defecto" UserOrGroupSid="S-1-1-0" Action="Allow">
+      <Conditions><FilePathCondition Path="%PROGRAMFILES%\*" /></Conditions>
+    </FilePathRule>
+    <FilePathRule Id="a61c8b2c-a319-4cd0-9690-d2177cad7e51" Name="Permitir Windows" Description="Regla por defecto" UserOrGroupSid="S-1-1-0" Action="Allow">
+      <Conditions><FilePathCondition Path="%WINDIR%\*" /></Conditions>
+    </FilePathRule>
+    <FilePathRule Id="fd686d83-a829-4351-8ff4-27c7de5755d2" Name="Permitir Administradores" Description="Regla por defecto" UserOrGroupSid="S-1-5-32-544" Action="Allow">
+      <Conditions><FilePathCondition Path="*" /></Conditions>
+    </FilePathRule>
+  </RuleCollection>
+</AppLockerPolicy>
+"@
+    $rutaXML = "$env:TEMP\salvavidas.xml"
+    $xmlSalvavidas | Out-File -FilePath $rutaXML -Encoding UTF8
+    
+    Set-AppLockerPolicy -XmlPolicy $rutaXML -ErrorAction SilentlyContinue
+
+    $netbios = (Get-ADDomain).NetBIOSName
+    $polNotepad = Get-AppLockerFileInformation -Path "C:\Windows\System32\notepad.exe" | New-AppLockerPolicy -RuleType Hash -User "$netbios\Grupo_NoCuates" -ErrorAction SilentlyContinue
+    
+    if ($polNotepad) {
+        foreach ($coleccion in $polNotepad.RuleCollections) {
+            foreach ($regla in $coleccion) {
+                $regla.Action = 'Deny'
+            }
+        }
+        Set-AppLockerPolicy -PolicyObject $polNotepad -Merge | Out-Null
+    }
+
+    Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Services\AppIDSvc" -Name "Start" -Value 2 -ErrorAction SilentlyContinue
+    Start-Service -Name AppIDSvc -ErrorAction SilentlyContinue
+
+    Write-Host "AppLocker configurado correctamente con reglas de rescate." -ForegroundColor Green
+}
