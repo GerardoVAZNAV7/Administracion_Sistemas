@@ -164,7 +164,7 @@ function Configurar-AppLocker {
     $netbios = (Get-ADDomain).NetBIOSName
     $polNotepad = Get-AppLockerFileInformation -Path "C:\Windows\System32\notepad.exe" | New-AppLockerPolicy -RuleType Hash -User "$netbios\Grupo_NoCuates" -ErrorAction SilentlyContinue
     
-    if ($polNotepad) {
+     if ($polNotepad) {
         foreach ($coleccion in $polNotepad.RuleCollections) {
             foreach ($regla in $coleccion) {
                 $regla.Action = 'Deny'
@@ -172,6 +172,14 @@ function Configurar-AppLocker {
         }
         Set-AppLockerPolicy -PolicyObject $polNotepad -Merge | Out-Null
     }
+
+    # AGREGA AQUÍ — Allow para Cuates (después del Deny de NoCuates)
+    $polAllow = Get-AppLockerFileInformation -Path "C:\Windows\System32\notepad.exe" |
+        New-AppLockerPolicy -RuleType Hash -User "$netbios\Grupo_Cuates" -ErrorAction SilentlyContinue
+    if ($polAllow) {
+        Set-AppLockerPolicy -PolicyObject $polAllow -Merge | Out-Null
+    }
+    # FIN DEL BLOQUE NUEVO
 
     Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Services\AppIDSvc" -Name "Start" -Value 2 -ErrorAction SilentlyContinue
     Start-Service -Name AppIDSvc -ErrorAction SilentlyContinue

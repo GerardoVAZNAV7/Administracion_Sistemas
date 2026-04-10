@@ -1,5 +1,5 @@
 # 1. Cargar el CSV y definir ruta base
-$usuarios = Import-Csv "C:\Practica8\usuarios.csv"
+$usuarios = Import-Csv "C:\Users\Administrator\Administracion_Sistemas\windows\modules\usuarios.csv"
 $RutaRaiz = "C:\Perfiles"
 $Dominio = (Get-ADDomain).NetBIOSName 
 

@@ -10,7 +10,7 @@ if (Test-Path $rutaFunciones) {
 Write-Host "=== INICIANDO CONFIGURACION PRACTICA 8 ===" -ForegroundColor Yellow
 
 # Validacion del CSV
-$rutaCSV = "C:\Practica8\usuarios.csv"
+$rutaCSV = "C:\Users\Administrator\Administracion_Sistemas\windows\modules\usuarios.csv"
 if (-not (Test-Path $rutaCSV)) {
     Write-Host "Error: No se encontro el archivo CSV en $rutaCSV. Crealo antes de continuar." -ForegroundColor Red
     exit
