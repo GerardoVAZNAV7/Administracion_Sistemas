@@ -5,7 +5,7 @@
 #  Coloca este archivo en C:\Practica8\
 # ============================================================
 
-$RutaCSV  = "C:\Users\Administrador\AdministracionSistemas\windows\usuarios.csv"
+$RutaCSV  = "C:\Users\Administrator\Administracion_Sistemas\windows\modules\usuarios.csv"
 $RutaRaiz = "C:\Perfiles"
 
 # ============================================================
