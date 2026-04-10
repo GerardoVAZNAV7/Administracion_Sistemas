@@ -18,15 +18,14 @@ if (-not (Test-Path $rutaCSV)) {
 
 $dominioDN = (Get-ADDomain).DistinguishedName
 
-# Ejecucion secuencial de las funciones
+# Forzar aplicacion de politicas al final
 Instalar-Requisitos
-Crear-EstructuraAD -dominioDN $dominioDN
-Importar-UsuariosCSV -rutaCSV $rutaCSV -dominioDN $dominioDN
-Configurar-GPO-Logoff -dominioDN $dominioDN
+Crear-EstructuraAD
+Importar-UsuariosCSV -rutaCSV $rutaCSV
+Configurar-GPO-Logoff
 Configurar-FSRM
 Configurar-AppLocker
 
-# Forzar aplicacion de politicas al final
 gpupdate /force | Out-Null
 
 Write-Host "=== PRACTICA 8 CONFIGURADA CON EXITO ===" -ForegroundColor Yellow
