@@ -378,15 +378,15 @@ function Mostrar-Menu {
     Write-Host "  CSV actual : $RutaCSV"                    -ForegroundColor DarkGray
     Write-Host "  Dominio    : $((Get-ADDomain).DNSRoot)"   -ForegroundColor DarkGray
     Write-Host "------------------------------------------" -ForegroundColor DarkGray
-    Write-Host "  [1]  Instalar Requisitos (FSRM + GPMC)"   -ForegroundColor Cyan
-    Write-Host "  [2]  Crear Estructura AD (OUs + Grupos)"  -ForegroundColor Cyan
+    Write-Host "  [1]  Instalar Requisitos [FSRM + GPMC]"   -ForegroundColor Cyan
+    Write-Host "  [2]  Crear Estructura AD [OUs + Grupos]"  -ForegroundColor Cyan
     Write-Host "  [3]  Importar Usuarios del CSV"           -ForegroundColor Cyan
     Write-Host "  [4]  Crear Carpetas y Permisos"           -ForegroundColor Cyan
     Write-Host "  [5]  Configurar GPO Cierre Forzado"       -ForegroundColor Cyan
-    Write-Host "  [6]  Configurar FSRM (Cuotas + Pantalla)" -ForegroundColor Cyan
+    Write-Host "  [6]  Configurar FSRM [Cuotas + Pantalla]" -ForegroundColor Cyan
     Write-Host "  [7]  Configurar AppLocker"                -ForegroundColor Cyan
     Write-Host "------------------------------------------" -ForegroundColor DarkGray
-    Write-Host "  [A]  EJECUTAR TODO (1 al 7)"              -ForegroundColor Green
+    Write-Host "  [A]  EJECUTAR TODO [1 al 7]"              -ForegroundColor Green
     Write-Host "  [G]  Forzar gpupdate /force"              -ForegroundColor Magenta
     Write-Host "  [S]  Salir"                               -ForegroundColor Red
     Write-Host "==========================================" -ForegroundColor Yellow
