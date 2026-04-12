@@ -201,6 +201,26 @@ function Configurar-FSRM {
         if (-not (Test-Path $r)) { New-Item -Path $r -ItemType Directory -Force | Out-Null }
     }
 
+    # Primero eliminar auto-cuotas activas antes de borrar plantillas
+    foreach ($autoQ in @($rutaCuates, $rutaNoCuates)) {
+        if (Get-FsrmAutoQuota -Path $autoQ -ErrorAction SilentlyContinue) {
+            Remove-FsrmAutoQuota -Path $autoQ -Confirm:$false
+        }
+    }
+
+    # Eliminar cuotas individuales antes de borrar plantillas
+    Get-ChildItem $rutaCuates   -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
+            Remove-FsrmQuota -Path $_.FullName -Confirm:$false
+        }
+    }
+    Get-ChildItem $rutaNoCuates -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
+            Remove-FsrmQuota -Path $_.FullName -Confirm:$false
+        }
+    }
+
+    # Ahora si se pueden borrar y recrear las plantillas
     foreach ($plantilla in @("FIM_10MB","FIM_5MB")) {
         if (Get-FsrmQuotaTemplate -Name $plantilla -ErrorAction SilentlyContinue) {
             Remove-FsrmQuotaTemplate -Name $plantilla -Confirm:$false
@@ -210,25 +230,16 @@ function Configurar-FSRM {
     New-FsrmQuotaTemplate -Name "FIM_5MB"  -Size 5MB  -SoftLimit $false
     Write-Host "      Plantillas FIM_10MB y FIM_5MB creadas." -ForegroundColor Green
 
-    foreach ($autoQ in @($rutaCuates, $rutaNoCuates)) {
-        if (Get-FsrmAutoQuota -Path $autoQ -ErrorAction SilentlyContinue) {
-            Remove-FsrmAutoQuota -Path $autoQ -Confirm:$false
-        }
-    }
+    # Auto-cuotas para carpetas futuras
     New-FsrmAutoQuota -Path $rutaCuates   -Template "FIM_10MB"
     New-FsrmAutoQuota -Path $rutaNoCuates -Template "FIM_5MB"
 
-    Get-ChildItem $rutaCuates   -Directory | ForEach-Object {
-        if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
-            Remove-FsrmQuota -Path $_.FullName -Confirm:$false
-        }
+    # Cuotas sobre carpetas de usuario ya existentes
+    Get-ChildItem $rutaCuates   -Directory -ErrorAction SilentlyContinue | ForEach-Object {
         New-FsrmQuota -Path $_.FullName -Template "FIM_10MB"
         Write-Host "      Cuota 10MB -> $($_.Name)" -ForegroundColor Green
     }
-    Get-ChildItem $rutaNoCuates -Directory | ForEach-Object {
-        if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
-            Remove-FsrmQuota -Path $_.FullName -Confirm:$false
-        }
+    Get-ChildItem $rutaNoCuates -Directory -ErrorAction SilentlyContinue | ForEach-Object {
         New-FsrmQuota -Path $_.FullName -Template "FIM_5MB"
         Write-Host "      Cuota 5MB  -> $($_.Name)" -ForegroundColor Green
     }
@@ -239,7 +250,7 @@ function Configurar-FSRM {
     New-FsrmFileGroup -Name "Archivos_Prohibidos_FIM" `
                       -IncludePattern @("*.mp3","*.mp4","*.exe","*.msi")
 
-    $accionEvento = New-FsrmAction -Type EventLog `
+    $accionEvento = New-FsrmAction -Type Event `
         -EventType Warning `
         -Body "FSRM BLOQUEO: [Source File Path] | Usuario: [Source Io Owner] | Fecha: [Date]"
 
