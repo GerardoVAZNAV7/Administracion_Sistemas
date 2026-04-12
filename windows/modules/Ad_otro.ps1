@@ -1,8 +1,7 @@
 #Requires -RunAsAdministrator
 # ============================================================
-#  Practica8.ps1 — Script unificado con menú interactivo
-#  Gestión de Recursos y Restricción del Entorno Operativo
-#  Coloca este archivo en C:\Practica8\
+#  Practica8.ps1 -- Script unificado con menu interactivo
+#  Gestion de Recursos y Restriccion del Entorno Operativo
 # ============================================================
 
 $RutaCSV  = "C:\Users\Administrator\Administracion_Sistemas\windows\modules\usuarios.csv"
@@ -23,7 +22,6 @@ function Crear-EstructuraAD {
     Write-Host "`n[2/6] Creando OUs y Grupos en Active Directory..." -ForegroundColor Cyan
     $dominioDN = (Get-ADDomain).DistinguishedName
 
-    # Unidades Organizativas
     foreach ($ou in @("Cuates", "No Cuates")) {
         if (-not (Get-ADOrganizationalUnit -Filter "Name -eq '$ou'" `
                   -SearchBase $dominioDN -SearchScope OneLevel -ErrorAction SilentlyContinue)) {
@@ -35,10 +33,9 @@ function Crear-EstructuraAD {
         }
     }
 
-    # Grupos de seguridad
     $grupos = @(
-        @{ Nombre = "Grupo_Cuates";    OU = "OU=Cuates,$dominioDN" },
-        @{ Nombre = "Grupo_NoCuates";  OU = "OU=No Cuates,$dominioDN" }
+        @{ Nombre = "Grupo_Cuates";   OU = "OU=Cuates,$dominioDN" },
+        @{ Nombre = "Grupo_NoCuates"; OU = "OU=No Cuates,$dominioDN" }
     )
     foreach ($g in $grupos) {
         if (-not (Get-ADGroup -Filter "Name -eq '$($g.Nombre)'" -ErrorAction SilentlyContinue)) {
@@ -55,7 +52,6 @@ function Crear-EstructuraAD {
 function Importar-UsuariosCSV {
     Write-Host "`n[3/6] Importando usuarios y configurando horarios..." -ForegroundColor Cyan
 
-    # Convierte horario local a los 21 bytes del atributo logonhours (UTC)
     function Crear-HorarioBytes {
         param([int]$Inicio, [int]$Fin)
         [byte[]]$bytes = New-Object byte[] 21
@@ -81,8 +77,8 @@ function Importar-UsuariosCSV {
         return $bytes
     }
 
-    [byte[]]$horasCuates   = Crear-HorarioBytes -Inicio 8  -Fin 15  # 08:00 – 15:00
-    [byte[]]$horasNoCuates = Crear-HorarioBytes -Inicio 15 -Fin 2   # 15:00 – 02:00
+    [byte[]]$horasCuates   = Crear-HorarioBytes -Inicio 8  -Fin 15
+    [byte[]]$horasNoCuates = Crear-HorarioBytes -Inicio 15 -Fin 2
     $dominioDN = (Get-ADDomain).DistinguishedName
 
     $usuarios = Import-Csv $RutaCSV
@@ -113,7 +109,7 @@ function Importar-UsuariosCSV {
             Set-ADUser -Identity $nUsuario -Replace @{ logonhours = [byte[]]$logonHours }
             Add-ADGroupMember -Identity $grupo -Members $nUsuario
 
-            Write-Host "      [OK] $nUsuario → $nDepto" -ForegroundColor Green
+            Write-Host "      [OK] $nUsuario -> $nDepto" -ForegroundColor Green
         }
         catch {
             Write-Host "      [ERROR] $nUsuario : $_" -ForegroundColor Red
@@ -126,7 +122,6 @@ function Configurar-Carpetas {
     Write-Host "`n[4/6] Creando estructura de carpetas y permisos..." -ForegroundColor Cyan
     $Dominio = (Get-ADDomain).NetBIOSName
 
-    # Carpetas de departamento con subcarpeta General
     foreach ($dep in @("Cuates", "NoCuates")) {
         $nombreGrupo = "Grupo_$dep"
         $rutaDep     = Join-Path $RutaRaiz $dep
@@ -146,7 +141,6 @@ function Configurar-Carpetas {
         Write-Host "      ACL aplicada: $rutaDep" -ForegroundColor Green
     }
 
-    # Carpetas privadas por usuario
     $usuarios = Import-Csv $RutaCSV
     foreach ($u in $usuarios) {
         $nombre      = $u.usuario.Trim()
@@ -170,7 +164,7 @@ function Configurar-Carpetas {
 
 # ------------------------------------------------------------
 function Configurar-GPO-Logoff {
-    Write-Host "`n[5/6] Configurando GPO de cierre forzado de sesión..." -ForegroundColor Cyan
+    Write-Host "`n[5/6] Configurando GPO de cierre forzado de sesion..." -ForegroundColor Cyan
     $dominioDN = (Get-ADDomain).DistinguishedName
     $gpoName   = "Politicas_FIM_CierreForzado"
 
@@ -179,7 +173,6 @@ function Configurar-GPO-Logoff {
         Write-Host "      GPO '$gpoName' creada." -ForegroundColor Green
     }
 
-    # Verificar link por separado para no fallar en re-ejecuciones
     $linkExiste = Get-GPInheritance -Target $dominioDN |
                   Select-Object -ExpandProperty GpoLinks |
                   Where-Object { $_.DisplayName -eq $gpoName }
@@ -199,7 +192,7 @@ function Configurar-GPO-Logoff {
 
 # ------------------------------------------------------------
 function Configurar-FSRM {
-    Write-Host "`n[6a] Configurando FSRM (Cuotas y Apantallamiento)..." -ForegroundColor Cyan
+    Write-Host "`n[6a] Configurando FSRM..." -ForegroundColor Cyan
 
     $rutaCuates   = "$RutaRaiz\Cuates"
     $rutaNoCuates = "$RutaRaiz\NoCuates"
@@ -208,7 +201,6 @@ function Configurar-FSRM {
         if (-not (Test-Path $r)) { New-Item -Path $r -ItemType Directory -Force | Out-Null }
     }
 
-    # 1. Limpiar y crear plantillas de cuota
     foreach ($plantilla in @("FIM_10MB","FIM_5MB")) {
         if (Get-FsrmQuotaTemplate -Name $plantilla -ErrorAction SilentlyContinue) {
             Remove-FsrmQuotaTemplate -Name $plantilla -Confirm:$false
@@ -218,7 +210,6 @@ function Configurar-FSRM {
     New-FsrmQuotaTemplate -Name "FIM_5MB"  -Size 5MB  -SoftLimit $false
     Write-Host "      Plantillas FIM_10MB y FIM_5MB creadas." -ForegroundColor Green
 
-    # 2. Auto-cuotas para carpetas futuras
     foreach ($autoQ in @($rutaCuates, $rutaNoCuates)) {
         if (Get-FsrmAutoQuota -Path $autoQ -ErrorAction SilentlyContinue) {
             Remove-FsrmAutoQuota -Path $autoQ -Confirm:$false
@@ -227,30 +218,27 @@ function Configurar-FSRM {
     New-FsrmAutoQuota -Path $rutaCuates   -Template "FIM_10MB"
     New-FsrmAutoQuota -Path $rutaNoCuates -Template "FIM_5MB"
 
-    # 3. Cuotas sobre carpetas de usuario ya existentes
     Get-ChildItem $rutaCuates   -Directory | ForEach-Object {
         if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
             Remove-FsrmQuota -Path $_.FullName -Confirm:$false
         }
         New-FsrmQuota -Path $_.FullName -Template "FIM_10MB"
-        Write-Host "      Cuota 10MB → $($_.Name)" -ForegroundColor Green
+        Write-Host "      Cuota 10MB -> $($_.Name)" -ForegroundColor Green
     }
     Get-ChildItem $rutaNoCuates -Directory | ForEach-Object {
         if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
             Remove-FsrmQuota -Path $_.FullName -Confirm:$false
         }
         New-FsrmQuota -Path $_.FullName -Template "FIM_5MB"
-        Write-Host "      Cuota 5MB  → $($_.Name)" -ForegroundColor Green
+        Write-Host "      Cuota 5MB  -> $($_.Name)" -ForegroundColor Green
     }
 
-    # 4. Grupo de archivos prohibidos con extensiones exactas de la rúbrica
     if (Get-FsrmFileGroup -Name "Archivos_Prohibidos_FIM" -ErrorAction SilentlyContinue) {
         Remove-FsrmFileGroup -Name "Archivos_Prohibidos_FIM" -Confirm:$false
     }
     New-FsrmFileGroup -Name "Archivos_Prohibidos_FIM" `
                       -IncludePattern @("*.mp3","*.mp4","*.exe","*.msi")
 
-    # 5. Apantallamiento Activo + notificación al Event Log (evidencias para rúbrica)
     $accionEvento = New-FsrmAction -Type EventLog `
         -EventType Warning `
         -Body "FSRM BLOQUEO: [Source File Path] | Usuario: [Source Io Owner] | Fecha: [Date]"
@@ -274,7 +262,6 @@ function Configurar-AppLocker {
 
     Stop-Service -Name AppIDSvc -Force -ErrorAction SilentlyContinue
 
-    # Política base: reglas por defecto para no bloquear el sistema
     $xmlBase = @"
 <AppLockerPolicy Version="1">
   <RuleCollection Type="Exe" EnforcementMode="Enabled">
@@ -295,9 +282,8 @@ function Configurar-AppLocker {
 "@
     $xmlBase | Set-Content "$env:TEMP\applocker_base.xml" -Encoding UTF8
     Set-AppLockerPolicy -XmlPolicy "$env:TEMP\applocker_base.xml"
-    Write-Host "      Reglas base aplicadas (Cuates pueden usar Notepad via %WINDIR%)." -ForegroundColor Green
+    Write-Host "      Reglas base aplicadas." -ForegroundColor Green
 
-    # Regla Hash DENY para Grupo_NoCuates — bloquea notepad.exe aunque lo renombren
     $polNotepad = Get-AppLockerFileInformation -Path "C:\Windows\System32\notepad.exe" |
                   New-AppLockerPolicy -RuleType Hash `
                                       -User "$netbios\Grupo_NoCuates" `
@@ -309,10 +295,9 @@ function Configurar-AppLocker {
 
     $xmlDeny = $polNotepad.ToXml()
 
-    # Fallback: si el objeto no reflejó el cambio, forzarlo en el XML directamente
     if ($xmlDeny -notmatch 'Action="Deny"') {
         $xmlDeny = $xmlDeny -replace 'Action="Allow"', 'Action="Deny"'
-        Write-Host "      [INFO] Action=Deny forzado vía XML." -ForegroundColor Yellow
+        Write-Host "      [INFO] Action=Deny forzado via XML." -ForegroundColor Yellow
     }
 
     $xmlDeny | Set-Content "$env:TEMP\applocker_deny_notepad.xml" -Encoding UTF8
@@ -340,20 +325,20 @@ function Ejecutar-Todo {
     Write-Host "`nAplicando gpupdate /force..." -ForegroundColor Cyan
     gpupdate /force | Out-Null
 
-    Write-Host "`n=========================================="  -ForegroundColor Yellow
-    Write-Host "   PRÁCTICA 8 CONFIGURADA CON ÉXITO      "   -ForegroundColor Yellow
-    Write-Host "=========================================="    -ForegroundColor Yellow
-    Write-Host "  C:\Perfiles\Cuates\    → Cuota 10MB"        -ForegroundColor White
-    Write-Host "  C:\Perfiles\NoCuates\  → Cuota 5MB"         -ForegroundColor White
-    Write-Host "  AppLocker: Notepad bloqueado a NoCuates"     -ForegroundColor White
-    Write-Host "  FSRM: Bloquea .mp3 .mp4 .exe .msi"          -ForegroundColor White
-    Write-Host "  GPO: Cierre forzado al vencer horario"       -ForegroundColor White
+    Write-Host "`n==========================================" -ForegroundColor Yellow
+    Write-Host "   PRACTICA 8 CONFIGURADA CON EXITO       " -ForegroundColor Yellow
+    Write-Host "==========================================" -ForegroundColor Yellow
+    Write-Host "  C:\Perfiles\Cuates\   -> Cuota 10MB"     -ForegroundColor White
+    Write-Host "  C:\Perfiles\NoCuates\ -> Cuota 5MB"      -ForegroundColor White
+    Write-Host "  AppLocker: Notepad bloqueado a NoCuates"  -ForegroundColor White
+    Write-Host "  FSRM: Bloquea .mp3 .mp4 .exe .msi"       -ForegroundColor White
+    Write-Host "  GPO: Cierre forzado al vencer horario"    -ForegroundColor White
 }
 
 # ------------------------------------------------------------
 function Validar-CSV {
     if (-not (Test-Path $RutaCSV)) {
-        Write-Host "[ERROR] No se encontró: $RutaCSV" -ForegroundColor Red
+        Write-Host "[ERROR] No se encontro: $RutaCSV" -ForegroundColor Red
         Write-Host "        Formato requerido: usuario,pass,departamento" -ForegroundColor Yellow
         return $false
     }
@@ -367,38 +352,38 @@ function Validar-CSV {
 }
 
 # ============================================================
-#  MENÚ PRINCIPAL
+#  MENU PRINCIPAL
 # ============================================================
 
 function Mostrar-Menu {
     Clear-Host
     Write-Host "==========================================" -ForegroundColor Yellow
-    Write-Host "       PRÁCTICA 8 — MENÚ PRINCIPAL        " -ForegroundColor Yellow
+    Write-Host "      PRACTICA 8  --  MENU PRINCIPAL      " -ForegroundColor Yellow
     Write-Host "==========================================" -ForegroundColor Yellow
-    Write-Host "  CSV actual : $RutaCSV"                    -ForegroundColor DarkGray
-    Write-Host "  Dominio    : $((Get-ADDomain).DNSRoot)"   -ForegroundColor DarkGray
+    Write-Host "  CSV     : $RutaCSV"                       -ForegroundColor DarkGray
+    Write-Host "  Dominio : $((Get-ADDomain).DNSRoot)"      -ForegroundColor DarkGray
     Write-Host "------------------------------------------" -ForegroundColor DarkGray
-    Write-Host "  [1]  Instalar Requisitos [FSRM + GPMC]"   -ForegroundColor Cyan
-    Write-Host "  [2]  Crear Estructura AD [OUs + Grupos]"  -ForegroundColor Cyan
-    Write-Host "  [3]  Importar Usuarios del CSV"           -ForegroundColor Cyan
-    Write-Host "  [4]  Crear Carpetas y Permisos"           -ForegroundColor Cyan
-    Write-Host "  [5]  Configurar GPO Cierre Forzado"       -ForegroundColor Cyan
-    Write-Host "  [6]  Configurar FSRM [Cuotas + Pantalla]" -ForegroundColor Cyan
-    Write-Host "  [7]  Configurar AppLocker"                -ForegroundColor Cyan
+    Write-Host "  1  -  Instalar Requisitos FSRM y GPMC"    -ForegroundColor Cyan
+    Write-Host "  2  -  Crear Estructura AD OUs y Grupos"   -ForegroundColor Cyan
+    Write-Host "  3  -  Importar Usuarios del CSV"          -ForegroundColor Cyan
+    Write-Host "  4  -  Crear Carpetas y Permisos"          -ForegroundColor Cyan
+    Write-Host "  5  -  Configurar GPO Cierre Forzado"      -ForegroundColor Cyan
+    Write-Host "  6  -  Configurar FSRM Cuotas y Pantalla"  -ForegroundColor Cyan
+    Write-Host "  7  -  Configurar AppLocker"               -ForegroundColor Cyan
     Write-Host "------------------------------------------" -ForegroundColor DarkGray
-    Write-Host "  [A]  EJECUTAR TODO [1 al 7]"              -ForegroundColor Green
-    Write-Host "  [G]  Forzar gpupdate /force"              -ForegroundColor Magenta
-    Write-Host "  [S]  Salir"                               -ForegroundColor Red
+    Write-Host "  8  -  EJECUTAR TODO del 1 al 7"           -ForegroundColor Green
+    Write-Host "  9  -  Forzar gpupdate"                    -ForegroundColor Magenta
+    Write-Host "  0  -  Salir"                              -ForegroundColor Red
     Write-Host "==========================================" -ForegroundColor Yellow
     Write-Host ""
 }
 
-# --- Bucle del menú ---
+# --- Bucle del menu ---
 do {
     Mostrar-Menu
     $opcion = Read-Host "Selecciona una opcion"
 
-    switch ($opcion.ToUpper()) {
+    switch ($opcion) {
         "1" { Instalar-Requisitos }
         "2" { Crear-EstructuraAD }
         "3" { if (Validar-CSV) { Importar-UsuariosCSV } }
@@ -406,22 +391,22 @@ do {
         "5" { Configurar-GPO-Logoff }
         "6" { Configurar-FSRM }
         "7" { Configurar-AppLocker }
-        "A" { Ejecutar-Todo }
-        "G" {
+        "8" { Ejecutar-Todo }
+        "9" {
             Write-Host "`nEjecutando gpupdate /force..." -ForegroundColor Cyan
             gpupdate /force
         }
-        "S" {
+        "0" {
             Write-Host "`nSaliendo..." -ForegroundColor Red
         }
         default {
-            Write-Host "`nOpción no válida. Intenta de nuevo." -ForegroundColor Red
+            Write-Host "`nOpcion no valida. Intenta de nuevo." -ForegroundColor Red
         }
     }
 
-    if ($opcion.ToUpper() -ne "S") {
-        Write-Host "`nPresiona ENTER para volver al menú..." -ForegroundColor DarkGray
+    if ($opcion -ne "0") {
+        Write-Host "`nPresiona ENTER para volver al menu..." -ForegroundColor DarkGray
         Read-Host | Out-Null
     }
 
-} while ($opcion.ToUpper() -ne "S")
+} while ($opcion -ne "0")
