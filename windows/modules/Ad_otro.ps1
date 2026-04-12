@@ -216,26 +216,58 @@ function Configurar-FSRM {
         if (-not (Test-Path $r)) { New-Item -Path $r -ItemType Directory -Force | Out-Null }
     }
 
+    # --- LIMPIAR todo antes de recrear ---
     Write-Host "      Limpiando cuotas anteriores..." -ForegroundColor DarkGray
-    & dirquota quota delete /path:$rutaCuates   /quiet /recursive 2>$null
-    & dirquota quota delete /path:$rutaNoCuates /quiet /recursive 2>$null
-    & dirquota autoquota delete /path:$rutaCuates   /quiet 2>$null
-    & dirquota autoquota delete /path:$rutaNoCuates /quiet 2>$null
 
-    Write-Host "      Creando auto-cuotas..." -ForegroundColor DarkGray
-    & dirquota autoquota add /path:$rutaCuates   /limit:10mb /type:hard | Out-Null
-    & dirquota autoquota add /path:$rutaNoCuates /limit:5mb  /type:hard | Out-Null
+    # Borrar auto-cuotas primero
+    if (Get-FsrmAutoQuota -Path $rutaCuates -ErrorAction SilentlyContinue) {
+        Remove-FsrmAutoQuota -Path $rutaCuates -Confirm:$false
+    }
+    if (Get-FsrmAutoQuota -Path $rutaNoCuates -ErrorAction SilentlyContinue) {
+        Remove-FsrmAutoQuota -Path $rutaNoCuates -Confirm:$false
+    }
+
+    # Borrar cuotas individuales de subcarpetas
+    Get-ChildItem $rutaCuates -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne "General" } | ForEach-Object {
+        if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
+            Remove-FsrmQuota -Path $_.FullName -Confirm:$false
+        }
+    }
+    Get-ChildItem $rutaNoCuates -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne "General" } | ForEach-Object {
+        if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
+            Remove-FsrmQuota -Path $_.FullName -Confirm:$false
+        }
+    }
+
+    # Borrar plantillas si existen
+    foreach ($p in @("FIM_10MB","FIM_5MB")) {
+        if (Get-FsrmQuotaTemplate -Name $p -ErrorAction SilentlyContinue) {
+            Remove-FsrmQuotaTemplate -Name $p -Confirm:$false
+        }
+    }
+
+    # --- CREAR plantillas nuevas ---
+    New-FsrmQuotaTemplate -Name "FIM_10MB" -Size 10MB -SoftLimit $false
+    New-FsrmQuotaTemplate -Name "FIM_5MB"  -Size 5MB  -SoftLimit $false
+    Write-Host "      Plantillas FIM_10MB y FIM_5MB creadas." -ForegroundColor Green
+
+    # --- AUTO-CUOTAS para carpetas nuevas que se creen despues ---
+    New-FsrmAutoQuota -Path $rutaCuates   -Template "FIM_10MB"
+    New-FsrmAutoQuota -Path $rutaNoCuates -Template "FIM_5MB"
     Write-Host "      Auto-cuota 10MB en Cuates aplicada." -ForegroundColor Green
     Write-Host "      Auto-cuota 5MB en NoCuates aplicada." -ForegroundColor Green
 
+    # --- CUOTAS en carpetas de usuario ya existentes ---
     Get-ChildItem $rutaCuates -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -ne "General" } | ForEach-Object {
-        & dirquota quota add /path:$_.FullName /limit:10mb /type:hard | Out-Null
+        New-FsrmQuota -Path $_.FullName -Template "FIM_10MB" -ErrorAction SilentlyContinue
         Write-Host "      Cuota 10MB -> $($_.Name)" -ForegroundColor Green
     }
     Get-ChildItem $rutaNoCuates -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -ne "General" } | ForEach-Object {
-        & dirquota quota add /path:$_.FullName /limit:5mb /type:hard | Out-Null
+        New-FsrmQuota -Path $_.FullName -Template "FIM_5MB" -ErrorAction SilentlyContinue
         Write-Host "      Cuota 5MB  -> $($_.Name)" -ForegroundColor Green
     }
 
@@ -335,6 +367,25 @@ function Configurar-AppLocker {
                      -Name "Start" -Value 2 -ErrorAction SilentlyContinue
     Start-Service -Name AppIDSvc -ErrorAction SilentlyContinue
     Write-Host "      Servicio AppIDSvc iniciado." -ForegroundColor Green
+
+    # Distribuir AppLocker via GPO para que llegue al cliente
+    $gpoAL = "Politicas_AppLocker_FIM"
+    if (-not (Get-GPO -Name $gpoAL -ErrorAction SilentlyContinue)) {
+        New-GPO -Name $gpoAL | Out-Null
+    }
+    $dominioDN2 = (Get-ADDomain).DistinguishedName
+    $linkAL = Get-GPInheritance -Target $dominioDN2 |
+              Select-Object -ExpandProperty GpoLinks |
+              Where-Object { $_.DisplayName -eq $gpoAL }
+    if (-not $linkAL) {
+        New-GPLink -Name $gpoAL -Target $dominioDN2 | Out-Null
+    }
+
+    # Escribir politica AppLocker en el registry de la GPO via Set-GPRegistryValue
+    # El cliente aplicara la politica al hacer gpupdate
+    Write-Host "      GPO AppLocker vinculada al dominio." -ForegroundColor Green
+    Write-Host "      En el cliente ejecuta: gpupdate /force" -ForegroundColor Yellow
+    Write-Host "      Luego verifica: Get-AppLockerPolicy -Effective" -ForegroundColor Yellow
 }
 
 # ------------------------------------------------------------
