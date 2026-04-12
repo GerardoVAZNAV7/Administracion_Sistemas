@@ -201,48 +201,29 @@ function Configurar-FSRM {
         if (-not (Test-Path $r)) { New-Item -Path $r -ItemType Directory -Force | Out-Null }
     }
 
-    # Primero eliminar auto-cuotas activas antes de borrar plantillas
-    foreach ($autoQ in @($rutaCuates, $rutaNoCuates)) {
-        if (Get-FsrmAutoQuota -Path $autoQ -ErrorAction SilentlyContinue) {
-            Remove-FsrmAutoQuota -Path $autoQ -Confirm:$false
-        }
-    }
-
-    # Eliminar cuotas individuales antes de borrar plantillas
-    Get-ChildItem $rutaCuates   -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-        if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
-            Remove-FsrmQuota -Path $_.FullName -Confirm:$false
-        }
-    }
-    Get-ChildItem $rutaNoCuates -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-        if (Get-FsrmQuota -Path $_.FullName -ErrorAction SilentlyContinue) {
-            Remove-FsrmQuota -Path $_.FullName -Confirm:$false
-        }
-    }
-
-    # Ahora si se pueden borrar y recrear las plantillas
-    foreach ($plantilla in @("FIM_10MB","FIM_5MB")) {
-        if (Get-FsrmQuotaTemplate -Name $plantilla -ErrorAction SilentlyContinue) {
-            Remove-FsrmQuotaTemplate -Name $plantilla -Confirm:$false
-        }
-    }
-    New-FsrmQuotaTemplate -Name "FIM_10MB" -Size 10MB -SoftLimit $false
-    New-FsrmQuotaTemplate -Name "FIM_5MB"  -Size 5MB  -SoftLimit $false
-    Write-Host "      Plantillas FIM_10MB y FIM_5MB creadas." -ForegroundColor Green
+    # Limpiar cuotas y auto-cuotas existentes con dirquota
+    Write-Host "      Limpiando cuotas anteriores..." -ForegroundColor DarkGray
+    & dirquota quota delete /path:$rutaCuates   /quiet /recursive 2>$null
+    & dirquota quota delete /path:$rutaNoCuates /quiet /recursive 2>$null
+    & dirquota autoquota delete /path:$rutaCuates   /quiet 2>$null
+    & dirquota autoquota delete /path:$rutaNoCuates /quiet 2>$null
 
     # Auto-cuotas para carpetas futuras
-    New-FsrmAutoQuota -Path $rutaCuates   -Template "FIM_10MB"
-    New-FsrmAutoQuota -Path $rutaNoCuates -Template "FIM_5MB"
+    Write-Host "      Creando auto-cuotas..." -ForegroundColor DarkGray
+    & dirquota autoquota add /path:$rutaCuates   /limit:10mb /type:hard | Out-Null
+    & dirquota autoquota add /path:$rutaNoCuates /limit:5mb  /type:hard | Out-Null
+    Write-Host "      Auto-cuota 10MB en Cuates aplicada." -ForegroundColor Green
+    Write-Host "      Auto-cuota 5MB en NoCuates aplicada." -ForegroundColor Green
 
     # Cuotas sobre carpetas de usuario ya existentes (excluir General)
-    Get-ChildItem $rutaCuates   -Directory -ErrorAction SilentlyContinue |
+    Get-ChildItem $rutaCuates -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -ne "General" } | ForEach-Object {
-        New-FsrmQuota -Path $_.FullName -Template "FIM_10MB"
+        & dirquota quota add /path:$_.FullName /limit:10mb /type:hard | Out-Null
         Write-Host "      Cuota 10MB -> $($_.Name)" -ForegroundColor Green
     }
     Get-ChildItem $rutaNoCuates -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -ne "General" } | ForEach-Object {
-        New-FsrmQuota -Path $_.FullName -Template "FIM_5MB"
+        & dirquota quota add /path:$_.FullName /limit:5mb /type:hard | Out-Null
         Write-Host "      Cuota 5MB  -> $($_.Name)" -ForegroundColor Green
     }
 
