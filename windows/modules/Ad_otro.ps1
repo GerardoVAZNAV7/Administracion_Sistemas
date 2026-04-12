@@ -80,17 +80,20 @@ function Importar-UsuariosCSV {
     [byte[]]$horasCuates   = Crear-HorarioBytes -Inicio 8  -Fin 15
     [byte[]]$horasNoCuates = Crear-HorarioBytes -Inicio 15 -Fin 2
     $dominioDN = (Get-ADDomain).DistinguishedName
+    $servidor  = $env:COMPUTERNAME
 
     $usuarios = Import-Csv $RutaCSV
     foreach ($u in $usuarios) {
-        $nUsuario = $u.usuario.Trim()
-        $nPass    = $u.pass.Trim()
-        $nDepto   = $u.departamento.Trim()
+        $nUsuario  = $u.usuario.Trim()
+        $nPass     = $u.pass.Trim()
+        $nDepto    = $u.departamento.Trim()
+        $depLimpio = $nDepto -replace " ", ""
 
         $ouPath  = if ($nDepto -eq "Cuates") { "OU=Cuates,$dominioDN" } else { "OU=No Cuates,$dominioDN" }
         $grupo   = if ($nDepto -eq "Cuates") { "Grupo_Cuates" } else { "Grupo_NoCuates" }
         [byte[]]$logonHours = if ($nDepto -eq "Cuates") { $horasCuates } else { $horasNoCuates }
 
+        $homeDir    = "\\$servidor\Perfiles\$depLimpio\$nUsuario"
         $securePass = ConvertTo-SecureString $nPass -AsPlainText -Force
         $upn        = "$nUsuario@$((Get-ADDomain).Forest)"
 
@@ -104,12 +107,14 @@ function Importar-UsuariosCSV {
                        -UserPrincipalName $upn `
                        -AccountPassword $securePass `
                        -Enabled $true `
-                       -Path $ouPath
+                       -Path $ouPath `
+                       -HomeDirectory $homeDir `
+                       -HomeDrive "H:"
 
             Set-ADUser -Identity $nUsuario -Replace @{ logonhours = [byte[]]$logonHours }
             Add-ADGroupMember -Identity $grupo -Members $nUsuario
 
-            Write-Host "      [OK] $nUsuario -> $nDepto" -ForegroundColor Green
+            Write-Host "      [OK] $nUsuario -> $nDepto | H: = $homeDir" -ForegroundColor Green
         }
         catch {
             Write-Host "      [ERROR] $nUsuario : $_" -ForegroundColor Red
@@ -119,8 +124,18 @@ function Importar-UsuariosCSV {
 
 # ------------------------------------------------------------
 function Configurar-Carpetas {
-    Write-Host "`n[4/6] Creando estructura de carpetas y permisos..." -ForegroundColor Cyan
+    Write-Host "`n[4/6] Creando carpetas, permisos y recurso compartido..." -ForegroundColor Cyan
     $Dominio = (Get-ADDomain).NetBIOSName
+
+    # Compartir C:\Perfiles por red como \\SERVIDOR\Perfiles
+    if (-not (Get-SmbShare -Name "Perfiles" -ErrorAction SilentlyContinue)) {
+        New-SmbShare -Name "Perfiles" -Path $RutaRaiz `
+            -FullAccess "Administrators" `
+            -ChangeAccess "$Dominio\Grupo_Cuates","$Dominio\Grupo_NoCuates" | Out-Null
+        Write-Host "      Recurso compartido: \\$($env:COMPUTERNAME)\Perfiles" -ForegroundColor Green
+    } else {
+        Write-Host "      Recurso compartido Perfiles ya existe." -ForegroundColor DarkGray
+    }
 
     foreach ($dep in @("Cuates", "NoCuates")) {
         $nombreGrupo = "Grupo_$dep"
@@ -201,21 +216,18 @@ function Configurar-FSRM {
         if (-not (Test-Path $r)) { New-Item -Path $r -ItemType Directory -Force | Out-Null }
     }
 
-    # Limpiar cuotas y auto-cuotas existentes con dirquota
     Write-Host "      Limpiando cuotas anteriores..." -ForegroundColor DarkGray
     & dirquota quota delete /path:$rutaCuates   /quiet /recursive 2>$null
     & dirquota quota delete /path:$rutaNoCuates /quiet /recursive 2>$null
     & dirquota autoquota delete /path:$rutaCuates   /quiet 2>$null
     & dirquota autoquota delete /path:$rutaNoCuates /quiet 2>$null
 
-    # Auto-cuotas para carpetas futuras
     Write-Host "      Creando auto-cuotas..." -ForegroundColor DarkGray
     & dirquota autoquota add /path:$rutaCuates   /limit:10mb /type:hard | Out-Null
     & dirquota autoquota add /path:$rutaNoCuates /limit:5mb  /type:hard | Out-Null
     Write-Host "      Auto-cuota 10MB en Cuates aplicada." -ForegroundColor Green
     Write-Host "      Auto-cuota 5MB en NoCuates aplicada." -ForegroundColor Green
 
-    # Cuotas sobre carpetas de usuario ya existentes (excluir General)
     Get-ChildItem $rutaCuates -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -ne "General" } | ForEach-Object {
         & dirquota quota add /path:$_.FullName /limit:10mb /type:hard | Out-Null
@@ -278,31 +290,74 @@ function Configurar-AppLocker {
     Set-AppLockerPolicy -XmlPolicy "$env:TEMP\applocker_base.xml"
     Write-Host "      Reglas base aplicadas." -ForegroundColor Green
 
-    $polNotepad = Get-AppLockerFileInformation -Path "C:\Windows\System32\notepad.exe" |
-                  New-AppLockerPolicy -RuleType Hash `
-                                      -User "$netbios\Grupo_NoCuates" `
-                                      -ErrorAction Stop
+    # Obtener SID real del grupo NoCuates
+    $sidNoCuates = (Get-ADGroup "Grupo_NoCuates").SID.Value
 
-    foreach ($col in $polNotepad.RuleCollections) {
-        foreach ($regla in $col) { $regla.Action = 'Deny' }
+    # Si existe notepad copiado del cliente, usar hash; si no, usar ruta
+    $rutaNotepadCliente = "C:\Perfiles\notepad_cliente.exe"
+
+    if (Test-Path $rutaNotepadCliente) {
+        Write-Host "      Generando hash del notepad del cliente..." -ForegroundColor DarkGray
+
+        $polHash = Get-AppLockerFileInformation -Path $rutaNotepadCliente |
+                   New-AppLockerPolicy -RuleType Hash -User "Everyone" -ErrorAction Stop
+
+        $xmlHash = $polHash.ToXml()
+        $xmlHash = $xmlHash -replace 'Action="Allow"', 'Action="Deny"'
+        $xmlHash = $xmlHash -replace 'UserOrGroupSid="S-1-1-0"', "UserOrGroupSid=`"$sidNoCuates`""
+        $xmlHash | Set-Content "$env:TEMP\applocker_hash.xml" -Encoding UTF8
+        Set-AppLockerPolicy -XmlPolicy "$env:TEMP\applocker_hash.xml" -Merge
+        Write-Host "      Notepad BLOQUEADO por HASH del cliente." -ForegroundColor Green
+
+    } else {
+        Write-Host "      notepad_cliente.exe no encontrado, usando bloqueo por ruta." -ForegroundColor Yellow
+
+        $xmlRuta = @"
+<AppLockerPolicy Version="1">
+  <RuleCollection Type="Exe" EnforcementMode="Enabled">
+    <FilePathRule Id="33333333-3333-3333-3333-333333333333"
+      Name="Bloquear Notepad System32" Description="" UserOrGroupSid="$sidNoCuates" Action="Deny">
+      <Conditions><FilePathCondition Path="%WINDIR%\System32\notepad.exe"/></Conditions>
+    </FilePathRule>
+    <FilePathRule Id="44444444-4444-4444-4444-444444444444"
+      Name="Bloquear Notepad SysWOW64" Description="" UserOrGroupSid="$sidNoCuates" Action="Deny">
+      <Conditions><FilePathCondition Path="%WINDIR%\SysWOW64\notepad.exe"/></Conditions>
+    </FilePathRule>
+  </RuleCollection>
+</AppLockerPolicy>
+"@
+        $xmlRuta | Set-Content "$env:TEMP\applocker_ruta.xml" -Encoding UTF8
+        Set-AppLockerPolicy -XmlPolicy "$env:TEMP\applocker_ruta.xml" -Merge
+        Write-Host "      Notepad BLOQUEADO por ruta para Grupo_NoCuates." -ForegroundColor Green
     }
-
-    $xmlDeny = $polNotepad.ToXml()
-
-    if ($xmlDeny -notmatch 'Action="Deny"') {
-        $xmlDeny = $xmlDeny -replace 'Action="Allow"', 'Action="Deny"'
-        Write-Host "      [INFO] Action=Deny forzado via XML." -ForegroundColor Yellow
-    }
-
-    $xmlDeny | Set-Content "$env:TEMP\applocker_deny_notepad.xml" -Encoding UTF8
-    Set-AppLockerPolicy -XmlPolicy "$env:TEMP\applocker_deny_notepad.xml" -Merge
-
-    Write-Host "      Notepad BLOQUEADO por Hash para Grupo_NoCuates." -ForegroundColor Green
 
     Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Services\AppIDSvc" `
                      -Name "Start" -Value 2 -ErrorAction SilentlyContinue
     Start-Service -Name AppIDSvc -ErrorAction SilentlyContinue
     Write-Host "      Servicio AppIDSvc iniciado." -ForegroundColor Green
+}
+
+# ------------------------------------------------------------
+function Copiar-NotepadCliente {
+    Write-Host "`n[10] Copiar notepad.exe desde el cliente Windows 10..." -ForegroundColor Cyan
+    Write-Host "      Esto permite bloqueo por HASH exacto del cliente." -ForegroundColor DarkGray
+    $ipCliente = Read-Host "  Ingresa la IP del cliente Windows 10"
+
+    try {
+        Copy-Item "\\$ipCliente\C`$\Windows\System32\notepad.exe" `
+                  "C:\Perfiles\notepad_cliente.exe" -Force -ErrorAction Stop
+        $hash = (Get-FileHash "C:\Perfiles\notepad_cliente.exe" -Algorithm SHA256).Hash
+        Write-Host "  [OK] notepad_cliente.exe copiado." -ForegroundColor Green
+        Write-Host "  SHA256: $hash" -ForegroundColor DarkGray
+        Write-Host "  Ahora corre la opcion 7 para aplicar el hash." -ForegroundColor Yellow
+    }
+    catch {
+        Write-Host "  [ERROR] No se pudo copiar automaticamente: $_" -ForegroundColor Red
+        Write-Host "`n  Pasos manuales:" -ForegroundColor Yellow
+        Write-Host "    1. En el cliente Windows 10, abre PowerShell como Admin" -ForegroundColor White
+        Write-Host "    2. Ejecuta: copy C:\Windows\System32\notepad.exe \\$($env:COMPUTERNAME)\Perfiles\notepad_cliente.exe" -ForegroundColor White
+        Write-Host "    3. Luego corre la opcion 7 en este menu" -ForegroundColor White
+    }
 }
 
 # ------------------------------------------------------------
@@ -327,6 +382,7 @@ function Ejecutar-Todo {
     Write-Host "  AppLocker: Notepad bloqueado a NoCuates"  -ForegroundColor White
     Write-Host "  FSRM: Bloquea .mp3 .mp4 .exe .msi"       -ForegroundColor White
     Write-Host "  GPO: Cierre forzado al vencer horario"    -ForegroundColor White
+    Write-Host "  H: montado automaticamente al iniciar sesion" -ForegroundColor White
 }
 
 # ------------------------------------------------------------
@@ -367,6 +423,7 @@ function Mostrar-Menu {
     Write-Host "------------------------------------------" -ForegroundColor DarkGray
     Write-Host "  8  -  EJECUTAR TODO del 1 al 7"           -ForegroundColor Green
     Write-Host "  9  -  Forzar gpupdate"                    -ForegroundColor Magenta
+    Write-Host " 10  -  Copiar notepad del cliente"         -ForegroundColor Cyan
     Write-Host "  0  -  Salir"                              -ForegroundColor Red
     Write-Host "==========================================" -ForegroundColor Yellow
     Write-Host ""
@@ -378,24 +435,21 @@ do {
     $opcion = Read-Host "Selecciona una opcion"
 
     switch ($opcion) {
-        "1" { Instalar-Requisitos }
-        "2" { Crear-EstructuraAD }
-        "3" { if (Validar-CSV) { Importar-UsuariosCSV } }
-        "4" { if (Validar-CSV) { Configurar-Carpetas } }
-        "5" { Configurar-GPO-Logoff }
-        "6" { Configurar-FSRM }
-        "7" { Configurar-AppLocker }
-        "8" { Ejecutar-Todo }
-        "9" {
+        "1"  { Instalar-Requisitos }
+        "2"  { Crear-EstructuraAD }
+        "3"  { if (Validar-CSV) { Importar-UsuariosCSV } }
+        "4"  { if (Validar-CSV) { Configurar-Carpetas } }
+        "5"  { Configurar-GPO-Logoff }
+        "6"  { Configurar-FSRM }
+        "7"  { Configurar-AppLocker }
+        "8"  { Ejecutar-Todo }
+        "9"  {
             Write-Host "`nEjecutando gpupdate /force..." -ForegroundColor Cyan
             gpupdate /force
         }
-        "0" {
-            Write-Host "`nSaliendo..." -ForegroundColor Red
-        }
-        default {
-            Write-Host "`nOpcion no valida. Intenta de nuevo." -ForegroundColor Red
-        }
+        "10" { Copiar-NotepadCliente }
+        "0"  { Write-Host "`nSaliendo..." -ForegroundColor Red }
+        default { Write-Host "`nOpcion no valida. Intenta de nuevo." -ForegroundColor Red }
     }
 
     if ($opcion -ne "0") {
