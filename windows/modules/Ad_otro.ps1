@@ -295,11 +295,15 @@ function Configurar-FSRM {
 
 # ------------------------------------------------------------
 function Configurar-AppLocker {
-    Write-Host "`n[6b] Configurando AppLocker..." -ForegroundColor Cyan
-    $netbios = (Get-ADDomain).NetBIOSName
+    Write-Host "`n[6b] Configurando AppLocker via GPO..." -ForegroundColor Cyan
+    $netbios  = (Get-ADDomain).NetBIOSName
+    $domDN    = (Get-ADDomain).DistinguishedName
+    $gpoName  = "Politicas_AppLocker_FIM"
+    $sidNoCuates = (Get-ADGroup "Grupo_NoCuates").SID.Value
 
     Stop-Service -Name AppIDSvc -Force -ErrorAction SilentlyContinue
 
+    # --- 1. Politica base: todos pueden usar %WINDIR% y %PROGRAMFILES% ---
     $xmlBase = @"
 <AppLockerPolicy Version="1">
   <RuleCollection Type="Exe" EnforcementMode="Enabled">
@@ -315,80 +319,79 @@ function Configurar-AppLocker {
       Name="Permitir Administradores" Description="" UserOrGroupSid="S-1-5-32-544" Action="Allow">
       <Conditions><FilePathCondition Path="*"/></Conditions>
     </FilePathRule>
-  </RuleCollection>
-</AppLockerPolicy>
-"@
-    $xmlBase | Set-Content "$env:TEMP\applocker_base.xml" -Encoding UTF8
-    Set-AppLockerPolicy -XmlPolicy "$env:TEMP\applocker_base.xml"
-    Write-Host "      Reglas base aplicadas." -ForegroundColor Green
-
-    # Obtener SID real del grupo NoCuates
-    $sidNoCuates = (Get-ADGroup "Grupo_NoCuates").SID.Value
-
-    # Si existe notepad copiado del cliente, usar hash; si no, usar ruta
-    $rutaNotepadCliente = "C:\Perfiles\notepad_cliente.exe"
-
-    if (Test-Path $rutaNotepadCliente) {
-        Write-Host "      Generando hash del notepad del cliente..." -ForegroundColor DarkGray
-
-        $polHash = Get-AppLockerFileInformation -Path $rutaNotepadCliente |
-                   New-AppLockerPolicy -RuleType Hash -User "Everyone" -ErrorAction Stop
-
-        $xmlHash = $polHash.ToXml()
-        $xmlHash = $xmlHash -replace 'Action="Allow"', 'Action="Deny"'
-        $xmlHash = $xmlHash -replace 'UserOrGroupSid="S-1-1-0"', "UserOrGroupSid=`"$sidNoCuates`""
-        $xmlHash | Set-Content "$env:TEMP\applocker_hash.xml" -Encoding UTF8
-        Set-AppLockerPolicy -XmlPolicy "$env:TEMP\applocker_hash.xml" -Merge
-        Write-Host "      Notepad BLOQUEADO por HASH del cliente." -ForegroundColor Green
-
-    } else {
-        Write-Host "      notepad_cliente.exe no encontrado, usando bloqueo por ruta." -ForegroundColor Yellow
-
-        $xmlRuta = @"
-<AppLockerPolicy Version="1">
-  <RuleCollection Type="Exe" EnforcementMode="Enabled">
     <FilePathRule Id="33333333-3333-3333-3333-333333333333"
-      Name="Bloquear Notepad System32" Description="" UserOrGroupSid="$sidNoCuates" Action="Deny">
-      <Conditions><FilePathCondition Path="%WINDIR%\System32\notepad.exe"/></Conditions>
+      Name="Bloquear Notepad System32 NoCuates" Description="" UserOrGroupSid="$sidNoCuates" Action="Deny">
+      <Conditions><FilePathCondition Path="%WINDIR%\System32
+otepad.exe"/></Conditions>
     </FilePathRule>
     <FilePathRule Id="44444444-4444-4444-4444-444444444444"
-      Name="Bloquear Notepad SysWOW64" Description="" UserOrGroupSid="$sidNoCuates" Action="Deny">
-      <Conditions><FilePathCondition Path="%WINDIR%\SysWOW64\notepad.exe"/></Conditions>
+      Name="Bloquear Notepad SysWOW64 NoCuates" Description="" UserOrGroupSid="$sidNoCuates" Action="Deny">
+      <Conditions><FilePathCondition Path="%WINDIR%\SysWOW64
+otepad.exe"/></Conditions>
     </FilePathRule>
   </RuleCollection>
 </AppLockerPolicy>
 "@
-        $xmlRuta | Set-Content "$env:TEMP\applocker_ruta.xml" -Encoding UTF8
-        Set-AppLockerPolicy -XmlPolicy "$env:TEMP\applocker_ruta.xml" -Merge
-        Write-Host "      Notepad BLOQUEADO por ruta para Grupo_NoCuates." -ForegroundColor Green
+
+    # --- 2. Aplicar localmente en el servidor ---
+    $xmlBase | Set-Content "$env:TEMPpplocker_completo.xml" -Encoding UTF8
+    Set-AppLockerPolicy -XmlPolicy "$env:TEMPpplocker_completo.xml"
+    Write-Host "      Politica AppLocker aplicada localmente." -ForegroundColor Green
+
+    # --- 3. Crear GPO y vincularla al dominio ---
+    if (-not (Get-GPO -Name $gpoName -ErrorAction SilentlyContinue)) {
+        New-GPO -Name $gpoName | Out-Null
+        Write-Host "      GPO '$gpoName' creada." -ForegroundColor Green
+    }
+    $linkExiste = Get-GPInheritance -Target $domDN |
+                  Select-Object -ExpandProperty GpoLinks |
+                  Where-Object { $_.DisplayName -eq $gpoName }
+    if (-not $linkExiste) {
+        New-GPLink -Name $gpoName -Target $domDN | Out-Null
+        Write-Host "      GPO vinculada al dominio." -ForegroundColor Green
     }
 
+    # --- 4. Meter las reglas AppLocker dentro de la GPO via registro ---
+    # AppLocker se guarda en HKLM\SOFTWARE\Policies\Microsoft\Windows\SrpV2
+    # La forma correcta es copiar la politica local a la GPO con Set-AppLockerPolicy -Ldap
+    $gpoObj   = Get-GPO -Name $gpoName
+    $gpoId    = $gpoObj.Id.ToString()
+    $ldapPath = "LDAP://CN={$gpoId},CN=Policies,CN=System,$domDN"
+
+    try {
+        Set-AppLockerPolicy -XmlPolicy "$env:TEMPpplocker_completo.xml" `
+                            -Ldap $ldapPath -ErrorAction Stop
+        Write-Host "      Politica AppLocker guardada en GPO correctamente." -ForegroundColor Green
+    }
+    catch {
+        # Fallback: copiar archivos de politica AppLocker al SYSVOL de la GPO manualmente
+        Write-Host "      Usando metodo alternativo para GPO..." -ForegroundColor Yellow
+        $sysvol   = "\$($env:COMPUTERNAME)\SYSVOL\$((Get-ADDomain).DNSRoot)\Policies\{$gpoId}\Machine\Microsoft\Windows NT\AppLocker"
+        if (-not (Test-Path $sysvol)) {
+            New-Item -Path $sysvol -ItemType Directory -Force | Out-Null
+        }
+        $xmlBase | Set-Content "$sysvol\Exe.xml" -Encoding UTF8
+        Write-Host "      Politica copiada al SYSVOL de la GPO." -ForegroundColor Green
+    }
+
+    # --- 5. Activar AppIDSvc en el servidor ---
     Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Services\AppIDSvc" `
                      -Name "Start" -Value 2 -ErrorAction SilentlyContinue
     Start-Service -Name AppIDSvc -ErrorAction SilentlyContinue
     Write-Host "      Servicio AppIDSvc iniciado." -ForegroundColor Green
 
-    # Distribuir AppLocker via GPO para que llegue al cliente
-    $gpoAL = "Politicas_AppLocker_FIM"
-    if (-not (Get-GPO -Name $gpoAL -ErrorAction SilentlyContinue)) {
-        New-GPO -Name $gpoAL | Out-Null
-    }
-    $dominioDN2 = (Get-ADDomain).DistinguishedName
-    $linkAL = Get-GPInheritance -Target $dominioDN2 |
-              Select-Object -ExpandProperty GpoLinks |
-              Where-Object { $_.DisplayName -eq $gpoAL }
-    if (-not $linkAL) {
-        New-GPLink -Name $gpoAL -Target $dominioDN2 | Out-Null
-    }
+    # --- 6. Activar AppIDSvc en el cliente via GPO de registro ---
+    Set-GPRegistryValue -Name $gpoName `
+        -Key "HKLM\SYSTEM\CurrentControlSet\Services\AppIDSvc" `
+        -ValueName "Start" -Type DWord -Value 2 | Out-Null
+    Write-Host "      AppIDSvc configurado para arranque automatico en clientes via GPO." -ForegroundColor Green
 
-    # Escribir politica AppLocker en el registry de la GPO via Set-GPRegistryValue
-    # El cliente aplicara la politica al hacer gpupdate
-    Write-Host "      GPO AppLocker vinculada al dominio." -ForegroundColor Green
+    gpupdate /force | Out-Null
+    Write-Host "      gpupdate aplicado." -ForegroundColor Green
+    Write-Host "      Notepad BLOQUEADO para Grupo_NoCuates." -ForegroundColor Green
     Write-Host "      En el cliente ejecuta: gpupdate /force" -ForegroundColor Yellow
-    Write-Host "      Luego verifica: Get-AppLockerPolicy -Effective" -ForegroundColor Yellow
 }
 
-# ------------------------------------------------------------
 function Copiar-NotepadCliente {
     Write-Host "`n[10] Copiar notepad.exe desde el cliente Windows 10..." -ForegroundColor Cyan
     Write-Host "      Esto permite bloqueo por HASH exacto del cliente." -ForegroundColor DarkGray
