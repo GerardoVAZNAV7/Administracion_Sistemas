@@ -234,12 +234,14 @@ function Configurar-FSRM {
     New-FsrmAutoQuota -Path $rutaCuates   -Template "FIM_10MB"
     New-FsrmAutoQuota -Path $rutaNoCuates -Template "FIM_5MB"
 
-    # Cuotas sobre carpetas de usuario ya existentes
-    Get-ChildItem $rutaCuates   -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+    # Cuotas sobre carpetas de usuario ya existentes (excluir General)
+    Get-ChildItem $rutaCuates   -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne "General" } | ForEach-Object {
         New-FsrmQuota -Path $_.FullName -Template "FIM_10MB"
         Write-Host "      Cuota 10MB -> $($_.Name)" -ForegroundColor Green
     }
-    Get-ChildItem $rutaNoCuates -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+    Get-ChildItem $rutaNoCuates -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -ne "General" } | ForEach-Object {
         New-FsrmQuota -Path $_.FullName -Template "FIM_5MB"
         Write-Host "      Cuota 5MB  -> $($_.Name)" -ForegroundColor Green
     }
