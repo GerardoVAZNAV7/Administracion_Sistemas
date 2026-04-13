@@ -1,20 +1,19 @@
 #!/bin/bash
 # Ejecutar como root: sudo bash unir_dominio.sh
+# REQUISITO: paquetes ya instalados, ejecutar SIN NAT solo con red interna
 
 set -e
 
-echo "[1/5] Instalando paquetes..."
-apt-get update -qq
-apt-get install -y realmd sssd sssd-tools adcli samba-common-bin \
-                   oddjob oddjob-mkhomedir packagekit krb5-user
-echo "      Paquetes instalados."
+echo "[1/3] Sincronizando reloj..."
+ntpdate 192.168.10.10
+echo "      Reloj sincronizado."
 
-echo "[2/5] Uniendo al dominio baja.com..."
+echo "[2/3] Uniendo al dominio baja.com..."
 echo "      Ingresa la contraseña de Administrator cuando se pida"
 realm join --user=Administrator baja.com
 echo "      Unido al dominio."
 
-echo "[3/5] Configurando sssd.conf..."
+echo "[3/3] Configurando sssd, sudo y servicios..."
 cat > /etc/sssd/sssd.conf << EOF
 [sssd]
 domains = baja.com
@@ -36,20 +35,14 @@ access_provider = ad
 EOF
 
 chmod 600 /etc/sssd/sssd.conf
-echo "      sssd.conf configurado."
 
-echo "[4/5] Habilitando home automático al login..."
-pam-auth-update --enable mkhomedir
-echo "      mkhomedir habilitado."
-
-echo "[5/5] Configurando sudo para AD..."
 cat > /etc/sudoers.d/ad-admins << EOF
-# Admins del dominio baja.com
 %domain\ admins@baja.com  ALL=(ALL) ALL
 %Grupo_Cuates@baja.com    ALL=(ALL) ALL
 EOF
-
 chmod 440 /etc/sudoers.d/ad-admins
+
+pam-auth-update --enable mkhomedir
 systemctl restart sssd
 systemctl enable sssd
 systemctl restart oddjobd
