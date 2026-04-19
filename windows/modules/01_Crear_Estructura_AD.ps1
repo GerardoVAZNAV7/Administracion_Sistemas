@@ -62,7 +62,7 @@ foreach ($g in $Grupos) {
 Write-Host "`n[+] Creando Usuarios Administradores Delegados..." -ForegroundColor Green
 
 $AdminPath = "OU=AdminsDelegados,$DomainDN"
-$AdminPassword = ConvertTo-SecureString "P@ssw0rd.Admin2024!" -AsPlainText -Force
+$AdminPassword = ConvertTo-SecureString "Gerardo1234!!" -AsPlainText -Force
 
 $Admins = @(
     @{ SAM="admin_identidad"; Display="Admin Identidad (IAM)";   Grupo="GRP_IAMOperators";     GrupoPriv=$true },
@@ -108,7 +108,7 @@ foreach ($a in $Admins) {
 # =========================================
 Write-Host "`n[+] Creando usuarios de prueba en OU Cuates y NoCuates..." -ForegroundColor Green
 
-$UserPass = ConvertTo-SecureString "User1234!" -AsPlainText -Force
+$UserPass = ConvertTo-SecureString "User1234!!" -AsPlainText -Force
 
 $UsuariosPrueba = @(
     @{ SAM="usuario.cuate1";    OU="OU=UsuariosTest,OU=Cuates,$DomainDN" },
