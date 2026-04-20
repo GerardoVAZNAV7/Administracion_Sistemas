@@ -420,29 +420,29 @@ Pop-Location
 $dirSeguro = $MultiOTPDir
 $dominioSeguro = $DomainName
 
-Write-Host ""
-Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║          INSTRUCCIONES PARA ACTIVAR MFA                     ║" -ForegroundColor Cyan
-Write-Host "╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-Write-Host "║                                                              ║" -ForegroundColor Cyan
-Write-Host "║  PASO A: LEE LOS SECRETOS TOTP                              ║" -ForegroundColor Yellow
-Write-Host ("║    Get-Content '" + $SecretsFile + "'") -ForegroundColor White
-Write-Host "║                                                              ║" -ForegroundColor Cyan
-Write-Host "║  PASO B: CONFIGURA MICROSOFT/GOOGLE AUTHENTICATOR          ║" -ForegroundColor Yellow
-Write-Host "║    1. Abre la app en tu movil                               ║" -ForegroundColor White
-Write-Host "║    2. Toca '+' -> Ingresar clave de configuracion           ║" -ForegroundColor White
-Write-Host ("║    3. Nombre: admin_identidad@" + $dominioSeguro) -ForegroundColor White
-Write-Host "║    4. Clave: [el secreto del archivo]                       ║" -ForegroundColor White
-Write-Host "║    5. Tipo: Basado en tiempo (TOTP)                         ║" -ForegroundColor White
-Write-Host "║                                                              ║" -ForegroundColor Cyan
-Write-Host "║  PASO C: INICIA EL SERVICIO multiOTP                       ║" -ForegroundColor Yellow
-Write-Host ("║    cd " + $dirSeguro) -ForegroundColor White
-Write-Host "║    .\webservice_install.cmd                                  ║" -ForegroundColor White
-Write-Host "║                                                              ║" -ForegroundColor Cyan
-Write-Host "║  PASO D: REINICIA EL SERVIDOR                               ║" -ForegroundColor Yellow
-Write-Host "║    Restart-Computer -Force                                   ║" -ForegroundColor White
-Write-Host "║                                                              ║" -ForegroundColor Cyan
-Write-Host "║  PASO E: AL HACER LOGIN                                     ║" -ForegroundColor Yellow
-Write-Host "║    Usuario + Contrasena + Codigo de 6 digitos del movil     ║" -ForegroundColor White
-Write-Host "║                                                              ║" -ForegroundColor Cyan
-Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+# Write-Host ""
+# Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+# Write-Host "║          INSTRUCCIONES PARA ACTIVAR MFA                     ║" -ForegroundColor Cyan
+# Write-Host "╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+# Write-Host "║                                                              ║" -ForegroundColor Cyan
+# Write-Host "║  PASO A: LEE LOS SECRETOS TOTP                              ║" -ForegroundColor Yellow
+# Write-Host ("║    Get-Content '" + $SecretsFile + "'") -ForegroundColor White
+# Write-Host "║                                                              ║" -ForegroundColor Cyan
+# Write-Host "║  PASO B: CONFIGURA MICROSOFT/GOOGLE AUTHENTICATOR          ║" -ForegroundColor Yellow
+# Write-Host "║    1. Abre la app en tu movil                               ║" -ForegroundColor White
+# Write-Host "║    2. Toca '+' -> Ingresar clave de configuracion           ║" -ForegroundColor White
+# Write-Host ("║    3. Nombre: admin_identidad@" + $dominioSeguro) -ForegroundColor White
+# Write-Host "║    4. Clave: [el secreto del archivo]                       ║" -ForegroundColor White
+# Write-Host "║    5. Tipo: Basado en tiempo (TOTP)                         ║" -ForegroundColor White
+# Write-Host "║                                                              ║" -ForegroundColor Cyan
+# Write-Host "║  PASO C: INICIA EL SERVICIO multiOTP                       ║" -ForegroundColor Yellow
+# Write-Host ("║    cd " + $dirSeguro) -ForegroundColor White
+# Write-Host "║    .\webservice_install.cmd                                  ║" -ForegroundColor White
+# Write-Host "║                                                              ║" -ForegroundColor Cyan
+# Write-Host "║  PASO D: REINICIA EL SERVIDOR                               ║" -ForegroundColor Yellow
+# Write-Host "║    Restart-Computer -Force                                   ║" -ForegroundColor White
+# Write-Host "║                                                              ║" -ForegroundColor Cyan
+# Write-Host "║  PASO E: AL HACER LOGIN                                     ║" -ForegroundColor Yellow
+# Write-Host "║    Usuario + Contrasena + Codigo de 6 digitos del movil     ║" -ForegroundColor White
+# Write-Host "║                                                              ║" -ForegroundColor Cyan
+# Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
