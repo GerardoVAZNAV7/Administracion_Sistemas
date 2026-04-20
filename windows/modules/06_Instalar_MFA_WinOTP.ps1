@@ -510,35 +510,35 @@ $lineaSecretos = "    Get-Content " + $SecretsFile
 $lineaDominio  = "    3. Nombre: admin_identidad@" + $DomainName
 $lineaCD       = "    cd " + $MultiOTPDir
 
-Write-Host ""
-Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║          INSTRUCCIONES PARA ACTIVAR MFA                     ║" -ForegroundColor Cyan
-Write-Host "╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-Write-Host "║                                                              ║" -ForegroundColor White
-Write-Host "║  PASO A: LEE LOS SECRETOS TOTP                              ║" -ForegroundColor Yellow
-Write-Host $lineaSecretos                                                      -ForegroundColor White
-Write-Host "║                                                              ║" -ForegroundColor White
-Write-Host "║  PASO B: CONFIGURA MICROSOFT/GOOGLE AUTHENTICATOR          ║" -ForegroundColor Yellow
-Write-Host "║    1. Abre la app en tu movil                               ║" -ForegroundColor White
-Write-Host "║    2. Toca + -> Ingresar clave de configuracion             ║" -ForegroundColor White
-Write-Host $lineaDominio                                                        -ForegroundColor White
-Write-Host "║    4. Clave: [el secreto del archivo]                       ║" -ForegroundColor White
-Write-Host "║    5. Tipo: Basado en tiempo (TOTP)                         ║" -ForegroundColor White
-Write-Host "║                                                              ║" -ForegroundColor White
-Write-Host "║  PASO C: INICIA EL SERVICIO multiOTP                       ║" -ForegroundColor Yellow
-Write-Host $lineaCD                                                             -ForegroundColor White
-Write-Host "║    .\webservice_install.cmd                                  ║" -ForegroundColor White
-Write-Host "║                                                              ║" -ForegroundColor White
-Write-Host "║  PASO D: REINICIA EL SERVIDOR                               ║" -ForegroundColor Yellow
-Write-Host "║    Restart-Computer -Force                                   ║" -ForegroundColor White
-Write-Host "║                                                              ║" -ForegroundColor White
-Write-Host "║  PASO E: AL HACER LOGIN                                     ║" -ForegroundColor Yellow
-Write-Host "║    Usuario + Contrasena + Codigo de 6 digitos del movil     ║" -ForegroundColor White
-Write-Host "║                                                              ║" -ForegroundColor White
-Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+# Write-Host ""
+# Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+# Write-Host "║          INSTRUCCIONES PARA ACTIVAR MFA                     ║" -ForegroundColor Cyan
+# Write-Host "╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+# Write-Host "║                                                              ║" -ForegroundColor White
+# Write-Host "║  PASO A: LEE LOS SECRETOS TOTP                              ║" -ForegroundColor Yellow
+# Write-Host $lineaSecretos                                                      -ForegroundColor White
+# Write-Host "║                                                              ║" -ForegroundColor White
+# Write-Host "║  PASO B: CONFIGURA MICROSOFT/GOOGLE AUTHENTICATOR          ║" -ForegroundColor Yellow
+# Write-Host "║    1. Abre la app en tu movil                               ║" -ForegroundColor White
+# Write-Host "║    2. Toca + -> Ingresar clave de configuracion             ║" -ForegroundColor White
+# Write-Host $lineaDominio                                                        -ForegroundColor White
+# Write-Host "║    4. Clave: [el secreto del archivo]                       ║" -ForegroundColor White
+# Write-Host "║    5. Tipo: Basado en tiempo (TOTP)                         ║" -ForegroundColor White
+# Write-Host "║                                                              ║" -ForegroundColor White
+# Write-Host "║  PASO C: INICIA EL SERVICIO multiOTP                       ║" -ForegroundColor Yellow
+# Write-Host $lineaCD                                                             -ForegroundColor White
+# Write-Host "║    .\webservice_install.cmd                                  ║" -ForegroundColor White
+# Write-Host "║                                                              ║" -ForegroundColor White
+# Write-Host "║  PASO D: REINICIA EL SERVIDOR                               ║" -ForegroundColor Yellow
+# Write-Host "║    Restart-Computer -Force                                   ║" -ForegroundColor White
+# Write-Host "║                                                              ║" -ForegroundColor White
+# Write-Host "║  PASO E: AL HACER LOGIN                                     ║" -ForegroundColor Yellow
+# Write-Host "║    Usuario + Contrasena + Codigo de 6 digitos del movil     ║" -ForegroundColor White
+# Write-Host "║                                                              ║" -ForegroundColor White
+# Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 
-Write-Log ("=== Script 06 completado a las " + (Get-Date -Format "HH:mm:ss") + " ===") "Cyan"
-Write-Host ""
-Write-Host ("  Log completo en: " + $LogFile) -ForegroundColor Gray
-Write-Host ""
-Write-Host "=== [06] CONFIGURACION multiOTP COMPLETADA ===" -ForegroundColor Cyan
+# Write-Log ("=== Script 06 completado a las " + (Get-Date -Format "HH:mm:ss") + " ===") "Cyan"
+# Write-Host ""
+# Write-Host ("  Log completo en: " + $LogFile) -ForegroundColor Gray
+# Write-Host ""
+# Write-Host "=== [06] CONFIGURACION multiOTP COMPLETADA ===" -ForegroundColor Cyan
