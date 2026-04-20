@@ -527,29 +527,29 @@ try {
 # =========================================================
 # RESUMEN FINAL
 # =========================================================
-Write-Host ""
-Write-Host "╔══════════════════════════════════════════════════════╗" -ForegroundColor Cyan
-Write-Host "║              RESUMEN DE CONFIGURACION               ║" -ForegroundColor Cyan
-Write-Host "╠══════════════════════════════════════════════════════╣" -ForegroundColor Cyan
-Write-Host "║                                                      ║" -ForegroundColor White
-Write-Host "║  multiOTP - Usuarios registrados:                   ║" -ForegroundColor Yellow
-Write-Host "║    admin_identidad, admin_storage,                  ║" -ForegroundColor White
-Write-Host "║    admin_politicas, admin_auditoria,                ║" -ForegroundColor White
-Write-Host "║    Administrator  (secreto nuevo generado)          ║" -ForegroundColor White
-Write-Host "║    Verificar: .\multiotp.exe -checkpwd USUARIO NNN  ║" -ForegroundColor White
-Write-Host "║                                                      ║" -ForegroundColor White
-Write-Host "║  Perfiles Moviles:                                  ║" -ForegroundColor Yellow
-$lineaShare = "║    Share: \\" + $ServerName + "\Perfiles$"
-Write-Host $lineaShare                                               -ForegroundColor White
-Write-Host "║    Los archivos persisten entre sesiones            ║" -ForegroundColor White
-Write-Host "║                                                      ║" -ForegroundColor White
-Write-Host "║  FSRM - Bloqueados: .mp3 .mp4 .exe .avi .mkv       ║" -ForegroundColor Yellow
-Write-Host "║    Cuates   -> C:\UserData\Cuates    (10 MB)        ║" -ForegroundColor White
-Write-Host "║    NoCuates -> C:\UserData\NoCuates  ( 5 MB)        ║" -ForegroundColor White
-Write-Host "║                                                      ║" -ForegroundColor White
-Write-Host "║  SIGUIENTE PASO:                                    ║" -ForegroundColor Yellow
-Write-Host "║    1. Prueba checkpwd con codigo real del movil     ║" -ForegroundColor White
-Write-Host "║    2. Restart-Computer -Force                       ║" -ForegroundColor White
-Write-Host "╚══════════════════════════════════════════════════════╝" -ForegroundColor Cyan
+# Write-Host ""
+# Write-Host "╔══════════════════════════════════════════════════════╗" -ForegroundColor Cyan
+# Write-Host "║              RESUMEN DE CONFIGURACION               ║" -ForegroundColor Cyan
+# Write-Host "╠══════════════════════════════════════════════════════╣" -ForegroundColor Cyan
+# Write-Host "║                                                      ║" -ForegroundColor White
+# Write-Host "║  multiOTP - Usuarios registrados:                   ║" -ForegroundColor Yellow
+# Write-Host "║    admin_identidad, admin_storage,                  ║" -ForegroundColor White
+# Write-Host "║    admin_politicas, admin_auditoria,                ║" -ForegroundColor White
+# Write-Host "║    Administrator  (secreto nuevo generado)          ║" -ForegroundColor White
+# Write-Host "║    Verificar: .\multiotp.exe -checkpwd USUARIO NNN  ║" -ForegroundColor White
+# Write-Host "║                                                      ║" -ForegroundColor White
+# Write-Host "║  Perfiles Moviles:                                  ║" -ForegroundColor Yellow
+# $lineaShare = "║    Share: \\" + $ServerName + "\Perfiles$"
+# Write-Host $lineaShare                                               -ForegroundColor White
+# Write-Host "║    Los archivos persisten entre sesiones            ║" -ForegroundColor White
+# Write-Host "║                                                      ║" -ForegroundColor White
+# Write-Host "║  FSRM - Bloqueados: .mp3 .mp4 .exe .avi .mkv       ║" -ForegroundColor Yellow
+# Write-Host "║    Cuates   -> C:\UserData\Cuates    (10 MB)        ║" -ForegroundColor White
+# Write-Host "║    NoCuates -> C:\UserData\NoCuates  ( 5 MB)        ║" -ForegroundColor White
+# Write-Host "║                                                      ║" -ForegroundColor White
+# Write-Host "║  SIGUIENTE PASO:                                    ║" -ForegroundColor Yellow
+# Write-Host "║    1. Prueba checkpwd con codigo real del movil     ║" -ForegroundColor White
+# Write-Host "║    2. Restart-Computer -Force                       ║" -ForegroundColor White
+# Write-Host "╚══════════════════════════════════════════════════════╝" -ForegroundColor Cyan
 
-Write-Host "`n=== [06d] COMPLETADO ===" -ForegroundColor Cyan
+# Write-Host "`n=== [06d] COMPLETADO ===" -ForegroundColor Cyan
