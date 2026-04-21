@@ -211,63 +211,71 @@ Write-Log "     Ve a Configuracion > General > Fecha y Hora > Automatica (ON)" "
 
 
 # =====================================================
-# PARTE 2 - REGISTRO DEFINITIVO EN multiOTP
+# PARTE 2 - REGISTRO multiOTP Y DESCARGA DE BACKEND
 # =====================================================
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host "  PARTE 2: REGISTRO multiOTP DEFINITIVO  " -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 
-# -- 2.1 Encontrar multiotp.exe --
-Write-Log "Buscando multiotp.exe..." "Yellow"
-
-$MultiOTPExe = Get-ChildItem -Path $MultiOTPPath -Recurse -Filter "multiotp.exe" -ErrorAction SilentlyContinue |
-               Select-Object -First 1 -ExpandProperty FullName
+$MultiOTPExe = Get-ChildItem -Path $MultiOTPPath -Recurse -Filter "multiotp.exe" | Select-Object -First 1 -ExpandProperty FullName
 
 if (-not $MultiOTPExe) {
-    Write-Log "[WARN] multiotp.exe no encontrado en $MultiOTPPath." "Yellow"
-    Write-Log "Iniciando descarga automatica del backend de multiOTP..." "Cyan"
-    
-    $backendZip = "C:\MFA_Setup\multiotp_backend.zip"
-    
+    Write-Log "[WARN] multiOTP no detectado. Descargando backend..." "Yellow"
+    $backendZip = "$SetupPath\multiotp_windows.zip"
     try {
-        # Forzar TLS 1.2 para evitar errores de conexion
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        
-        # Consultar la API de GitHub para obtener la ultima version oficial
         $releaseUrl = "https://api.github.com/repos/multiOTP/multiOTP/releases/latest"
         $release = Invoke-RestMethod -Uri $releaseUrl -UseBasicParsing
+        $downloadUrl = ($release.assets | Where-Object { $_.name -match "windows" -and $_.name -match "\.zip$" }).browser_download_url
         
-        # Filtrar el archivo .zip especifico para Windows
-        $windowsAsset = $release.assets | Where-Object { $_.name -match "windows" -and $_.name -match "\.zip$" } | Select-Object -First 1
-        
-        if ($windowsAsset) {
-            Write-Log "Descargando version $($release.tag_name) desde GitHub ($($windowsAsset.size / 1MB | ForEach-Object ToString '0.0') MB)..." "Yellow"
-            Invoke-WebRequest -Uri $windowsAsset.browser_download_url -OutFile $backendZip -UseBasicParsing -TimeoutSec 120
-            
-            Write-Log "Extrayendo archivos en $MultiOTPPath..." "Yellow"
-            Expand-Archive -Path $backendZip -DestinationPath $MultiOTPPath -Force -ErrorAction Stop
-            
-            # Volver a buscar el ejecutable despues de extraer
-            $MultiOTPExe = Get-ChildItem -Path $MultiOTPPath -Recurse -Filter "multiotp.exe" -ErrorAction SilentlyContinue |
-                           Select-Object -First 1 -ExpandProperty FullName
-                           
-            if (-not $MultiOTPExe) {
-                Write-Log "[ERROR] Se extrajo el ZIP pero no se encontro multiotp.exe. Verifica manualmente." "Red"
-                exit 1
-            }
-            Write-Log "[OK] Backend de multiOTP descargado y extraido exitosamente." "Green"
-        }
-        else {
-            Write-Log "[ERROR] No se encontro el instalador de Windows en el ultimo release de GitHub." "Red"
-            exit 1
-        }
+        Write-Log "Descargando desde GitHub..." "Cyan"
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $backendZip -UseBasicParsing
+        Expand-Archive -Path $backendZip -DestinationPath $MultiOTPPath -Force
+        $MultiOTPExe = Get-ChildItem -Path $MultiOTPPath -Recurse -Filter "multiotp.exe" | Select-Object -First 1 -ExpandProperty FullName
+        Write-Log "[OK] Backend instalado exitosamente." "Green"
+    } catch {
+        Write-Log "[ERROR] No se pudo descargar el backend: $($_.Exception.Message)" "Red"
+        return
     }
-    catch {
-        Write-Log "[ERROR] Fallo al descargar o extraer multiOTP: $($_.Exception.Message)" "Red"
-        Write-Log "Descargalo manualmente desde https://download.multiotp.net/ y extraelo en C:\MultiOTP" "Yellow"
-        exit 1
-    }
+}
+
+$MultiOTPDir = Split-Path $MultiOTPExe -Parent
+$UsersDir    = Join-Path $MultiOTPDir "users"
+if (-not (Test-Path $UsersDir)) { New-Item -ItemType Directory -Path $UsersDir -Force }
+
+# Limpieza y configuración base
+Write-Log "Limpiando registros previos..." "Yellow"
+Get-ChildItem -Path $MultiOTPDir -Recurse -Filter "*.db" | Remove-Item -Force
+Invoke-MultiOTP -MultiOTPExe $MultiOTPExe -Args @("-config", "algorithm=TOTP", "digits=6", "time-interval=30") | Out-Null
+
+# Registro de Usuarios
+$SecretsFile = "$SetupPath\TOTP_Secrets.txt"
+$SecretsOutput = "=== SECRETOS TOTP ===`r`n"
+
+foreach ($admin in $AdminUsers) {
+    Write-Log "Registrando MFA para: $admin" "Cyan"
+    $secret = New-TOTPSecret
+    $res = Invoke-MultiOTP -MultiOTPExe $MultiOTPExe -Args @("-create", $admin, "TOTP", $secret, "6", "30")
+    
+    # Asegurar que el .db esté en la carpeta /users
+    $dbFile = Get-ChildItem -Path $MultiOTPDir -Filter "$admin.db"
+    if ($dbFile) { Move-Item $dbFile.FullName (Join-Path $UsersDir "$admin.db") -Force -ErrorAction SilentlyContinue }
+
+    # QR
+    $otpUri = "otpauth://totp/LabMFA:$admin?secret=$secret&issuer=LabMFA"
+    New-QRCodePNG -Text $otpUri -OutputPath "$SetupPath\QR_$admin.png" | Out-Null
+    
+    $SecretsOutput += "Usuario: $admin | Secreto: $secret`r`n"
+    Write-Log "  [OK] Secreto: $secret" "Gray"
+}
+$SecretsOutput | Out-File $SecretsFile -Encoding UTF8
+
+# Iniciar Web Service (Puerto 8112)
+Write-Log "Iniciando WebService de validacion..." "Yellow"
+$webInstall = Get-ChildItem -Path $MultiOTPDir -Recurse -Filter "webservice_install.cmd" | Select-Object -First 1
+if ($webInstall) {
+    Start-Process "cmd.exe" -ArgumentList "/c `"$($webInstall.FullName)`"" -WindowStyle Hidden
 }
 
 $MultiOTPDir  = Split-Path $MultiOTPExe -Parent
