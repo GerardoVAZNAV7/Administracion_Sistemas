@@ -225,10 +225,49 @@ $MultiOTPExe = Get-ChildItem -Path $MultiOTPPath -Recurse -Filter "multiotp.exe"
                Select-Object -First 1 -ExpandProperty FullName
 
 if (-not $MultiOTPExe) {
-    Write-Log "ERROR: multiotp.exe no encontrado en $MultiOTPPath" "Red"
-    Write-Log "Descarga multiOTP desde https://download.multiotp.net/" "Red"
-    Write-Log "Extrae en C:\MultiOTP y vuelve a ejecutar este script" "Red"
-    exit 1
+    Write-Log "[WARN] multiotp.exe no encontrado en $MultiOTPPath." "Yellow"
+    Write-Log "Iniciando descarga automatica del backend de multiOTP..." "Cyan"
+    
+    $backendZip = "C:\MFA_Setup\multiotp_backend.zip"
+    
+    try {
+        # Forzar TLS 1.2 para evitar errores de conexion
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        
+        # Consultar la API de GitHub para obtener la ultima version oficial
+        $releaseUrl = "https://api.github.com/repos/multiOTP/multiOTP/releases/latest"
+        $release = Invoke-RestMethod -Uri $releaseUrl -UseBasicParsing
+        
+        # Filtrar el archivo .zip especifico para Windows
+        $windowsAsset = $release.assets | Where-Object { $_.name -match "windows" -and $_.name -match "\.zip$" } | Select-Object -First 1
+        
+        if ($windowsAsset) {
+            Write-Log "Descargando version $($release.tag_name) desde GitHub ($($windowsAsset.size / 1MB | ForEach-Object ToString '0.0') MB)..." "Yellow"
+            Invoke-WebRequest -Uri $windowsAsset.browser_download_url -OutFile $backendZip -UseBasicParsing -TimeoutSec 120
+            
+            Write-Log "Extrayendo archivos en $MultiOTPPath..." "Yellow"
+            Expand-Archive -Path $backendZip -DestinationPath $MultiOTPPath -Force -ErrorAction Stop
+            
+            # Volver a buscar el ejecutable despues de extraer
+            $MultiOTPExe = Get-ChildItem -Path $MultiOTPPath -Recurse -Filter "multiotp.exe" -ErrorAction SilentlyContinue |
+                           Select-Object -First 1 -ExpandProperty FullName
+                           
+            if (-not $MultiOTPExe) {
+                Write-Log "[ERROR] Se extrajo el ZIP pero no se encontro multiotp.exe. Verifica manualmente." "Red"
+                exit 1
+            }
+            Write-Log "[OK] Backend de multiOTP descargado y extraido exitosamente." "Green"
+        }
+        else {
+            Write-Log "[ERROR] No se encontro el instalador de Windows en el ultimo release de GitHub." "Red"
+            exit 1
+        }
+    }
+    catch {
+        Write-Log "[ERROR] Fallo al descargar o extraer multiOTP: $($_.Exception.Message)" "Red"
+        Write-Log "Descargalo manualmente desde https://download.multiotp.net/ y extraelo en C:\MultiOTP" "Yellow"
+        exit 1
+    }
 }
 
 $MultiOTPDir  = Split-Path $MultiOTPExe -Parent
@@ -728,71 +767,28 @@ if ($cpReg) {
     Write-Log "[OK] Credential Provider de multiOTP ya esta instalado" "Green"
 }
 else {
-    Write-Log "Buscando instalador del Credential Provider..." "Yellow"
+    Write-Log "Instalando Credential Provider desde archivo local..." "Yellow"
 
-    $CPZip  = "$SetupPath\multiOTP-CredentialProvider.zip"
-    $CPPath = "$SetupPath\CredentialProvider"
-    $cpOK   = $false
+    $CPZip  = "C:\MFA_Setup\multiOTP-CredentialProvider.zip"
+    $CPPath = "C:\MFA_Setup\CredentialProvider"
 
-    # Verificar si ya existe el zip y es valido
     if (Test-Path $CPZip) {
-        $zipSize = (Get-Item $CPZip -ErrorAction SilentlyContinue).Length
-        if ($zipSize -gt 500KB) {
-            $cpOK = $true
-            Write-Log "CP zip ya existe y es valido - omitiendo descarga" "Yellow"
-        }
-        else {
-            Remove-Item $CPZip -Force -ErrorAction SilentlyContinue
-        }
-    }
-
-    # Intentar descargar CP si no existe o estaba corrupto
-    if (-not $cpOK) {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-        $cpUrls = @(
-            "https://download.multiotp.net/credential-provider/multiOTPCredentialProvider-5.9.8.0-x64.zip",
-            "https://download.multiotp.net/credential-provider/multiOTPCredentialProvider-5.9.7.2-x64.zip",
-            "https://download.multiotp.net/credential-provider/multiOTPCredentialProvider-5.9.6.6-x64.zip"
-        )
-
-        foreach ($url in $cpUrls) {
-            try {
-                Invoke-WebRequest -Uri $url -OutFile $CPZip -UseBasicParsing -TimeoutSec 90
-                $cpOK = $true
-                Write-Log "[OK] CP descargado desde: $url" "Green"
-                break
-            }
-            catch {
-                Write-Log "  Fallo: $url" "Gray"
-            }
-        }
-
-        if (-not $cpOK) {
-            Write-Host ""
-            Write-Host "  DESCARGA MANUAL REQUERIDA para el Credential Provider:" -ForegroundColor Red
-            Write-Host "  1. Ve a: github.com/multiOTP/multiOTPCredentialProvider/releases" -ForegroundColor Yellow
-            Write-Host "  2. Descarga el .zip x64 mas reciente" -ForegroundColor Yellow
-            Write-Host "  3. Copialo a: $CPZip" -ForegroundColor Yellow
-            Write-Host "  4. Vuelve a ejecutar SOLO la Parte 5 de este script" -ForegroundColor Yellow
-            Write-Log "CP requiere descarga manual" "Red"
-        }
-    }
-
-    # Extraer e instalar CP si el zip existe
-    if ($cpOK -and (Test-Path $CPZip)) {
         try {
+            # Limpiar el directorio de extracción si ya existe de un intento previo
             if (Test-Path $CPPath) {
                 Remove-Item $CPPath -Recurse -Force -ErrorAction SilentlyContinue
             }
-            Expand-Archive -Path $CPZip -DestinationPath $CPPath -Force -ErrorAction SilentlyContinue
+            
+            Write-Log "Extrayendo $CPZip..." "Yellow"
+            Expand-Archive -Path $CPZip -DestinationPath $CPPath -Force -ErrorAction Stop
 
+            # Buscar el instalador (.exe o .msi) dentro de la carpeta extraída
             $installer = Get-ChildItem -Path $CPPath -Recurse -ErrorAction SilentlyContinue |
                          Where-Object { $_.Name -match "install|setup|multiOTP" -and $_.Extension -match "exe|msi" } |
                          Select-Object -First 1 -ExpandProperty FullName
 
             if ($installer) {
-                Write-Log "Instalando CP desde: $installer" "Yellow"
+                Write-Log "Ejecutando instalador: $installer" "Yellow"
 
                 if ($installer -like "*.msi") {
                     Start-Process "msiexec" `
@@ -807,13 +803,15 @@ else {
                 Write-Log "[OK] CP instalado. Se necesita reinicio para activarse." "Green"
             }
             else {
-                Write-Log "[WARN] Instalador no encontrado en $CPPath" "Yellow"
-                Write-Log "       Instala manualmente: Server 127.0.0.1, Puerto 8112" "Yellow"
+                Write-Log "[WARN] No se encontro instalador (.exe o .msi) dentro del ZIP." "Yellow"
             }
         }
         catch {
-            Write-Log "[WARN] Error instalando CP: $($_.Exception.Message)" "Yellow"
+            Write-Log "[ERROR] Fallo al extraer o instalar el CP: $($_.Exception.Message)" "Red"
         }
+    }
+    else {
+        Write-Log "[ERROR] El archivo $CPZip NO existe. Verifica que este en C:\MFA_Setup\" "Red"
     }
 }
 
