@@ -1,9 +1,5 @@
-$path = "C:\ProgramData\ssh\sshd_config"
-$config = Get-Content $path -Raw
+# Abrir politica local
+secedit /export /cfg C:\temp\sec.cfg /areas USER_RIGHTS
 
-# Quitar solo la linea AuthorizedKeysFile dentro del bloque Match
-$config = $config -replace "(?m)^\s*AuthorizedKeysFile\s+__PROGRAMDATA__.*?(\r?\n)", ""
-
-$config | Out-File $path -Encoding UTF8 -Force
-Restart-Service sshd -Force
-Write-Host "Listo!" -ForegroundColor Green
+# Ver quien tiene el derecho de red actualmente
+Get-Content C:\temp\sec.cfg | Select-String "SeNetworkLogonRight"
