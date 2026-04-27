@@ -6,7 +6,10 @@
 # 1. Usamos Alpine como base (muy ligero, seguro)
 FROM nginx:alpine
 
-# 2. Eliminamos las firmas del servidor (server_tokens off)
+# 2. Instalamos iputils (incluye ping) para la prueba de red
+RUN apk add --no-cache iputils
+
+# 3. Eliminamos las firmas del servidor (server_tokens off)
 #    Esto evita que Nginx revele su versión en cabeceras HTTP
 RUN sed -i 's|#server_tokens off;|server_tokens off;|' /etc/nginx/nginx.conf
 
