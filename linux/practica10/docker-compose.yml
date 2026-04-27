@@ -1,70 +1,75 @@
-services:
+version: '3.9'
 
-  nginx-web:
-    build:
-      context: ./nginx
-      dockerfile: Dockerfile
-    container_name: nginx-web
-    restart: unless-stopped
-    mem_limit: 512m
-    cpus: "0.5"
-    ports:
-      - "80:80"
-    volumes:
-      - web_content:/usr/share/nginx/html
-    networks:
-      infra_red:
-        ipv4_address: 172.20.0.10
-    depends_on:
-      - postgres-db
-
-  postgres-db:
-    image: postgres:15-alpine
-    container_name: postgres-db
-    restart: unless-stopped
-    mem_limit: 512m
-    cpus: "0.5"
-    environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: seguro123
-      POSTGRES_DB: practica10
-    volumes:
-      - db_data:/var/lib/postgresql/data
-      - ./backups:/backups
-      - ./postgres/backup_postgres.sh:/usr/local/bin/backup_postgres.sh
-    networks:
-      infra_red:
-        ipv4_address: 172.20.0.20
-
-  ftp-server:
-    build:
-      context: ./ftp
-      dockerfile: Dockerfile
-    container_name: ftp-server
-    restart: unless-stopped
-    security_opt:
-      - seccomp:unconfined
-    mem_limit: 256m
-    cpus: "0.25"
-    ports:
-      - "21:21"
-      - "21100-21105:21100-21105"
-    volumes:
-      - web_content:/ftp/webfiles
-    networks:
-      infra_red:
-        ipv4_address: 172.20.0.30
-
-volumes:
-  db_data:
-    name: db_data
-  web_content:
-    name: web_content
-
+# ── Redes ─────────────────────────────────────────────────────────────────────
 networks:
   infra_red:
-    name: infra_red
     driver: bridge
     ipam:
       config:
         - subnet: 172.20.0.0/16
+          gateway: 172.20.0.1
+
+# ── Volúmenes ─────────────────────────────────────────────────────────────────
+volumes:
+  db_data:
+  web_content:     # COMPARTIDO entre web_server y ftp_server
+
+# ── Servicios ─────────────────────────────────────────────────────────────────
+services:
+
+  # ── Base de datos PostgreSQL ─────────────────────────────────────────────────
+  db_postgres:
+    image: postgres:15-alpine
+    container_name: db_postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+      POSTGRES_DB: empresa
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db/backup.sh:/backup.sh
+      - /srv/backups/postgres:/backups
+    networks:
+      infra_red:
+        ipv4_address: 172.20.0.20
+    restart: unless-stopped
+
+  # ── Servidor Web NGINX personalizado ────────────────────────────────────────
+  web_server:
+    build: ./web
+    container_name: web_server
+    ports:
+      - "80:80"
+    volumes:
+      # web_content montado en /files/ para que NGINX sirva los archivos del FTP
+      - web_content:/usr/share/nginx/html/files
+    networks:
+      infra_red:
+        ipv4_address: 172.20.0.10
+    mem_limit: 512m        # límite de RAM
+    cpus: "0.5"            # límite de CPU
+    depends_on:
+      - db_postgres
+    restart: unless-stopped
+
+  # ── Servidor FTP ─────────────────────────────────────────────────────────────
+  ftp_server:
+    image: garethflowers/vsftpd
+    container_name: ftp_server
+    environment:
+      FTP_USER: ftpuser
+      FTP_PASS: ftp12345
+      PASV_MIN_PORT: 21100
+      PASV_MAX_PORT: 21110
+      # IP pública/host para modo pasivo (ajusta si usas una IP diferente)
+      PASV_ADDRESS: "127.0.0.1"
+    volumes:
+      # MISMO volumen: los archivos subidos por FTP aparecen en la web
+      - web_content:/home/ftpuser
+    ports:
+      - "21:21"
+      - "21100-21110:21100-21110"
+    networks:
+      infra_red:
+        ipv4_address: 172.20.0.30
+    restart: unless-stopped

@@ -1,24 +1,31 @@
-FROM nginx:alpine
+# ── Imagen base ligera ──────────────────────────────────────────────────────
+FROM nginx:1.25-alpine
 
-RUN apk add --no-cache iputils busybox-extras && \
-    chmod u+s $(find / -name "ping" 2>/dev/null | head -1)
+# Instalar módulo WebDAV (para subida de archivos desde el navegador)
+# ngx_http_dav_module viene compilado en el paquete nginx-module-dav de Alpine
+RUN apk add --no-cache nginx-mod-dav-ext || true
+# (El módulo DAV básico ya está incluido en nginx:alpine por defecto)
 
-RUN sed -i 's|#server_tokens off;|server_tokens off;|' /etc/nginx/nginx.conf
+# ── Copiar configuración personalizada ────────────────────────────────────────
+COPY nginx.conf /etc/nginx/nginx.conf
 
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+# ── Copiar contenido web estático ─────────────────────────────────────────────
+COPY html/ /usr/share/nginx/html/
 
-RUN addgroup -S webgroup && adduser -S webuser -G webgroup
+# ── Crear directorio de archivos FTP compartido ───────────────────────────────
+# Este directorio se montará como volumen compartido con ftp_server
+RUN mkdir -p /usr/share/nginx/html/files
 
-COPY web_content/ /usr/share/nginx/html/
-
-RUN chown -R webuser:webgroup /usr/share/nginx/html && \
-    chown -R webuser:webgroup /var/cache/nginx && \
-    chown -R webuser:webgroup /var/log/nginx && \
+# ── Permisos para usuario no-root (nginx, uid=101) ────────────────────────────
+RUN chown -R nginx:nginx /usr/share/nginx/html && \
+    chmod -R 755 /usr/share/nginx/html && \
+    chown -R nginx:nginx /var/cache/nginx && \
+    chown -R nginx:nginx /var/log/nginx && \
     touch /var/run/nginx.pid && \
-    chown webuser:webgroup /var/run/nginx.pid
+    chown nginx:nginx /var/run/nginx.pid
 
-USER webuser
+# ── Ejecutar como usuario no administrativo ───────────────────────────────────
+USER nginx
 
 EXPOSE 80
-
 CMD ["nginx", "-g", "daemon off;"]
