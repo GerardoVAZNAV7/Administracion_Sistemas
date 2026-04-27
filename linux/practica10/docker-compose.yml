@@ -1,6 +1,6 @@
-# version: '3.9'
+# Práctica 10 — Migración de servicios a contenedores
+# Gerardo Miguel Vázquez Navarro
 
-# ── Redes ─────────────────────────────────────────────────────────────────────
 networks:
   infra_red:
     driver: bridge
@@ -9,15 +9,13 @@ networks:
         - subnet: 172.20.0.0/16
           gateway: 172.20.0.1
 
-# ── Volúmenes ─────────────────────────────────────────────────────────────────
 volumes:
   db_data:
-  web_content:     # COMPARTIDO entre web_server y ftp_server
+  web_content:
 
-# ── Servicios ─────────────────────────────────────────────────────────────────
 services:
 
-  # ── Base de datos PostgreSQL ─────────────────────────────────────────────────
+  # ── Base de datos PostgreSQL ──────────────────────────────────────────────
   db_postgres:
     image: postgres:15-alpine
     container_name: db_postgres
@@ -27,49 +25,55 @@ services:
       POSTGRES_DB: empresa
     volumes:
       - db_data:/var/lib/postgresql/data
-      - ./db/backup.sh:/backup.sh
+      - ./postgres/backup_postgres.sh:/backup.sh
       - /srv/backups/postgres:/backups
     networks:
       infra_red:
         ipv4_address: 172.20.0.20
     restart: unless-stopped
 
-  # ── Servidor Web NGINX personalizado ────────────────────────────────────────
+  # ── Servidor Web NGINX personalizado ─────────────────────────────────────
   web_server:
-    build: ./web
+    build:
+      context: ./nginx
     container_name: web_server
     ports:
       - "80:80"
     volumes:
-      # web_content montado en /files/ para que NGINX sirva los archivos del FTP
       - web_content:/usr/share/nginx/html/files
     networks:
       infra_red:
         ipv4_address: 172.20.0.10
-    mem_limit: 512m        # límite de RAM
-    cpus: "0.5"            # límite de CPU
+    mem_limit: 512m
+    cpus: "0.5"
     depends_on:
       - db_postgres
     restart: unless-stopped
 
-  # ── Servidor FTP ─────────────────────────────────────────────────────────────
+  # ── Servidor FTP ──────────────────────────────────────────────────────────
   ftp_server:
-    image: garethflowers/vsftpd
+    build:
+      context: ./ftp
     container_name: ftp_server
     environment:
       FTP_USER: ftpuser
       FTP_PASS: ftp12345
-      PASV_MIN_PORT: 21100
-      PASV_MAX_PORT: 21110
-      # IP pública/host para modo pasivo (ajusta si usas una IP diferente)
-      PASV_ADDRESS: "127.0.0.1"
     volumes:
-      # MISMO volumen: los archivos subidos por FTP aparecen en la web
-      - web_content:/home/ftpuser
+      - web_content:/ftp/webfiles
     ports:
       - "21:21"
-      - "21100-21110:21100-21110"
+      - "21100-21105:21100-21105"
     networks:
       infra_red:
         ipv4_address: 172.20.0.30
+    restart: unless-stopped
+
+  # ── BusyBox para pruebas de red (ping) ───────────────────────────────────
+  busybox:
+    image: busybox:latest
+    container_name: busybox
+    networks:
+      infra_red:
+        ipv4_address: 172.20.0.40
+    command: ["sleep", "infinity"]
     restart: unless-stopped
