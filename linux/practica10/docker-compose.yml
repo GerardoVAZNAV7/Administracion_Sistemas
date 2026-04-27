@@ -1,112 +1,70 @@
-# ============================================================
-# docker-compose.yml — Infraestructura completa Práctica 10
-# Servicios: Nginx + PostgreSQL + FTP
-# ============================================================
-
-version: "3.8"
-
-# ====================
-# SERVICIOS
-# ====================
 services:
 
-  # --------------------------------------------------
-  # SERVICIO 1: Servidor Web (Nginx personalizado)
-  # --------------------------------------------------
   nginx-web:
     build:
-      context: ./nginx          # Usa el Dockerfile de la carpeta nginx/
+      context: ./nginx
       dockerfile: Dockerfile
     container_name: nginx-web
     restart: unless-stopped
-
-    # Límites de recursos (Prueba 10.4)
-    mem_limit: 512m             # Máximo 512 MB de RAM
-    cpus: "0.5"                 # Máximo 50% de un núcleo CPU
-
-    ports:
-      - "80:80"                 # Puerto del host : Puerto del contenedor
-
-    volumes:
-      # Volumen persistente para los archivos web
-      - web_content:/usr/share/nginx/html
-
-    networks:
-      infra_red:
-        ipv4_address: 172.20.0.10   # IP fija dentro de la red
-
-    depends_on:
-      - postgres-db              # Espera a que postgres esté listo
-
-  # --------------------------------------------------
-  # SERVICIO 2: Base de Datos (PostgreSQL)
-  # --------------------------------------------------
-  postgres-db:
-    image: postgres:15-alpine   # Imagen oficial ligera de PostgreSQL
-    container_name: postgres-db
-    restart: unless-stopped
-
     mem_limit: 512m
     cpus: "0.5"
-
-    environment:
-      POSTGRES_USER: admin          # Usuario de la BD
-      POSTGRES_PASSWORD: seguro123  # Contraseña (cámbiala en producción)
-      POSTGRES_DB: practica10       # Nombre de la base de datos inicial
-
+    ports:
+      - "80:80"
     volumes:
-      # Volumen persistente para los datos (Prueba 10.1)
-      - db_data:/var/lib/postgresql/data
-      # Carpeta en el HOST donde se guardan los respaldos
-      - ./backups:/backups
-      # Script de respaldo disponible dentro del contenedor
-      - ./postgres/backup_postgres.sh:/usr/local/bin/backup_postgres.sh
+      - web_content:/usr/share/nginx/html
+    networks:
+      infra_red:
+        ipv4_address: 172.20.0.10
+    depends_on:
+      - postgres-db
 
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: postgres-db
+    restart: unless-stopped
+    mem_limit: 512m
+    cpus: "0.5"
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: seguro123
+      POSTGRES_DB: practica10
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./backups:/backups
+      - ./postgres/backup_postgres.sh:/usr/local/bin/backup_postgres.sh
     networks:
       infra_red:
         ipv4_address: 172.20.0.20
 
-  # --------------------------------------------------
-  # SERVICIO 3: Servidor FTP
-  # --------------------------------------------------
   ftp-server:
     build:
       context: ./ftp
       dockerfile: Dockerfile
     container_name: ftp-server
     restart: unless-stopped
-
+    security_opt:
+      - seccomp:unconfined
     mem_limit: 256m
     cpus: "0.25"
-
     ports:
       - "21:21"
-      - "21100-21105:21100-21105"  # Puertos para modo pasivo
-
+      - "21100-21105:21100-21105"
     volumes:
-      # Comparte el mismo volumen que nginx (Prueba 10.3)
       - web_content:/ftp/webfiles
-
     networks:
       infra_red:
         ipv4_address: 172.20.0.30
 
-# ====================
-# VOLÚMENES PERSISTENTES
-# ====================
 volumes:
   db_data:
-    name: db_data        # Datos de PostgreSQL sobreviven si el contenedor muere
+    name: db_data
   web_content:
-    name: web_content    # Archivos web compartidos entre Nginx y FTP
+    name: web_content
 
-# ====================
-# RED PERSONALIZADA
-# ====================
 networks:
   infra_red:
     name: infra_red
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/16    # Segmento de red propio
+        - subnet: 172.20.0.0/16

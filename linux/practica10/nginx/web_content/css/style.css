@@ -22,7 +22,6 @@ body {
   overflow-x: hidden;
 }
 
-/* animated grid background */
 .grid-bg {
   position: fixed; inset: 0; z-index: 0;
   background-image:
@@ -55,7 +54,6 @@ nav { display: flex; gap: .75rem; flex-wrap: wrap; }
 
 main { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 3rem 2rem 5rem; }
 
-/* HERO */
 .hero { margin-bottom: 4rem; }
 .eyebrow {
   font-family: var(--mono); font-size: .8rem;
@@ -69,7 +67,6 @@ h1 {
 .accent { color: var(--accent); }
 .subtitle { font-size: 1.1rem; color: var(--muted); max-width: 520px; line-height: 1.7; }
 
-/* CARDS */
 .services {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 1.5rem; margin-bottom: 3rem;
@@ -90,7 +87,6 @@ h1 {
   padding: .3rem .7rem; border-radius: 4px;
 }
 
-/* NETWORK */
 .network-info {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 8px; padding: 2rem; margin-bottom: 3rem;
@@ -104,7 +100,6 @@ h1 {
 .dot.pg { background: #3b82f6; box-shadow: 0 0 8px #3b82f6; }
 .dot.ftp { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; }
 
-/* STATIC DEMO */
 .static-demo {
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 8px; padding: 2rem; text-align: center;
