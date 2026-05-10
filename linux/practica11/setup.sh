@@ -7,7 +7,7 @@
 set -euo pipefail
 
 USUARIO="gerardovn"
-PROYECTO_DIR="/home/${USUARIO}/practica11"
+PROYECTO_DIR="/home/${USUARIO}/Administracion_Sistemas/linux/practica11"
 
 echo "================================================================"
 echo "  PRÁCTICA 11 — Setup en Fedora Server"
