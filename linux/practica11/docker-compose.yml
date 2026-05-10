@@ -1,0 +1,103 @@
+# ============================================================
+#  docker-compose.yml — Práctica 11
+#  Ecosistema coordinado con redes multicapa
+# ============================================================
+
+services:
+
+  # ──────────────────────────────────────────────────────────
+  # 1. BALANCEADOR DE CARGA Y FRONTEND (nginx)
+  #    Único punto de entrada público
+  # ──────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:alpine
+    container_name: p11_nginx
+    restart: always
+    ports:
+      - "${NGINX_HOST_PORT}:80"          # único puerto expuesto al host
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - red_publica                       # vive en la red pública
+    depends_on:
+      - webserver
+
+  # ──────────────────────────────────────────────────────────
+  # 2. SERVIDOR DE APLICACIONES INTERNO (webserver)
+  #    Sin puertos expuestos al host; solo accesible vía nginx
+  # ──────────────────────────────────────────────────────────
+  webserver:
+    image: nginx:alpine
+    container_name: p11_webserver
+    restart: always
+    # ⚠ Sin bloque "ports:" → invisible desde fuera de Docker
+    volumes:
+      - ./webserver_html:/usr/share/nginx/html:ro
+    networks:
+      - red_publica                       # mismo segmento que nginx
+    # Página de bienvenida inyectada al vuelo
+    entrypoint: >
+      sh -c "mkdir -p /usr/share/nginx/html &&
+             echo '<h1>App interna OK — Práctica 11</h1>' > /usr/share/nginx/html/index.html &&
+             nginx -g 'daemon off;'"
+
+  # ──────────────────────────────────────────────────────────
+  # 3. BASE DE DATOS (PostgreSQL con persistencia)
+  # ──────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: p11_postgres
+    restart: always
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pg_data:/var/lib/postgresql/data  # volumen nombrado → persistencia
+    networks:
+      - red_datos                          # aislada en red de datos
+    # ── Healthcheck: espera a que Postgres acepte conexiones ──
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ──────────────────────────────────────────────────────────
+  # 4. PANEL ADMINISTRATIVO (pgAdmin)
+  #    Solo accesible mediante túnel SSH → sin puerto en host
+  # ──────────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: p11_pgadmin
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+    # ⚠ Sin bloque "ports:" → firewall + túnel SSH controlan acceso
+    networks:
+      - red_datos                          # aislado en red de datos
+    depends_on:
+      postgres:
+        condition: service_healthy         # espera healthcheck de postgres
+
+# ============================================================
+#  REDES MULTICAPA
+# ============================================================
+networks:
+  red_publica:
+    driver: bridge
+    name: practica11_red_publica
+
+  red_datos:
+    driver: bridge
+    name: practica11_red_datos
+    internal: true                         # sin salida a internet
+
+# ============================================================
+#  VOLÚMENES NOMBRADOS
+# ============================================================
+volumes:
+  pg_data:
+    name: practica11_pg_data
