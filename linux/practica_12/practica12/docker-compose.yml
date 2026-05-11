@@ -1,6 +1,7 @@
 # ============================================================
 #  docker-compose.yml — Práctica 12 + 13
 #  Servidor de correo privado + Portal Webmail Roundcube
+#  HTTPS autofirmado via nginx proxy (puerto 8443)
 #  Coexiste con práctica 11 (nginx en :80)
 # ============================================================
 
@@ -18,50 +19,41 @@ services:
     restart: always
     env_file: .env
     environment:
-      # ── Identidad ─────────────────────────────────────────
       OVERRIDE_HOSTNAME:          ${MAIL_HOSTNAME}
       POSTMASTER_ADDRESS:         ${POSTMASTER_ADDRESS}
-      # ── SSL ───────────────────────────────────────────────
       SSL_TYPE:                   ${SSL_TYPE}
-      # ── Rspamd ────────────────────────────────────────────
       ENABLE_RSPAMD:              ${RSPAMD_ENABLED}
-      ENABLE_CLAMAV:              0          # deshabilitado (pesado en lab)
-      # ── Fail2Ban ──────────────────────────────────────────
+      ENABLE_CLAMAV:              0
       ENABLE_FAIL2BAN:            ${FAIL2BAN_ENABLED}
       FAIL2BAN_BLOCKTYPE:         drop
-      # ── OpenDKIM ──────────────────────────────────────────
       ENABLE_OPENDKIM:            1
       OPENDKIM_DOMAIN:            ${MAIL_DOMAIN}
-      # ── Logging completo ──────────────────────────────────
       LOG_LEVEL:                  debug
       POSTFIX_INET_PROTOCOLS:     ipv4
-      # ── Seguridad SMTP ────────────────────────────────────
       SMTP_ONLY:                  0
       ENABLE_QUOTAS:              1
       ENABLE_MANAGESIEVE:         1
-      # ── Autenticación ─────────────────────────────────────
-      DOVECOT_PASS_ATTRS:         uid=user,userPassword=password
       ENABLE_SPAMASSASSIN:        0
       ENABLE_AMAVIS:              0
     ports:
-      - "${SMTP_PORT}:25"            # SMTP entrante
-      - "${SMTP_SUBMISSION_PORT}:587"  # SMTP con STARTTLS
-      - "${SMTP_SUBMISSIONS_PORT}:465" # SMTPS
-      - "${IMAP_PORT}:143"           # IMAP con STARTTLS
-      - "${IMAPS_PORT}:993"          # IMAPS
+      - "${SMTP_PORT}:25"
+      - "${SMTP_SUBMISSION_PORT}:587"
+      - "${SMTP_SUBMISSIONS_PORT}:465"
+      - "${IMAP_PORT}:143"
+      - "${IMAPS_PORT}:993"
     volumes:
-      - mail_data:/var/mail              # buzones (persistencia)
-      - mail_state:/var/mail-state       # estado interno
-      - mail_logs:/var/log/mail          # logs auditables
-      - mail_config:/tmp/docker-mailserver  # configuración
-      - ./certs:/tmp/ssl:ro             # certificados TLS
+      - mail_data:/var/mail
+      - mail_state:/var/mail-state
+      - mail_logs:/var/log/mail
+      - mail_config:/tmp/docker-mailserver
+      - ./certs:/tmp/ssl:ro
     networks:
       - red_correo
     cap_add:
-      - NET_ADMIN                        # necesario para Fail2Ban
+      - NET_ADMIN
       - SYS_PTRACE
     security_opt:
-      - no-new-privileges:false          # fail2ban necesita privilegios
+      - no-new-privileges:false
     healthcheck:
       test: ["CMD", "ss", "-lnt", "|", "grep", ":25"]
       interval: 30s
@@ -71,7 +63,6 @@ services:
 
   # ──────────────────────────────────────────────────────────
   # 2. BASE DE DATOS PARA ROUNDCUBE (MariaDB)
-  #    Almacena preferencias, libreta de direcciones, sesiones
   # ──────────────────────────────────────────────────────────
   roundcube_db:
     image: mariadb:11
@@ -94,9 +85,8 @@ services:
       start_period: 30s
 
   # ──────────────────────────────────────────────────────────
-  # 3. PORTAL WEBMAIL (Roundcube)
-  #    Interfaz web que usa IMAP/SMTP del mailserver interno
-  #    Puerto 8443 (HTTPS) para no chocar con práctica 11
+  # 3. PORTAL WEBMAIL (Roundcube) — solo HTTP interno
+  #    El HTTPS lo maneja el nginx proxy (servicio de abajo)
   # ──────────────────────────────────────────────────────────
   roundcube:
     image: roundcube/roundcubemail:latest-apache
@@ -108,33 +98,31 @@ services:
       mailserver:
         condition: service_started
     environment:
-      # ── Base de datos ──────────────────────────────────────
-      ROUNDCUBEMAIL_DB_TYPE:     mysql
-      ROUNDCUBEMAIL_DB_HOST:     roundcube_db
-      ROUNDCUBEMAIL_DB_PORT:     3306
-      ROUNDCUBEMAIL_DB_NAME:     ${ROUNDCUBE_DB_NAME}
-      ROUNDCUBEMAIL_DB_USER:     ${ROUNDCUBE_DB_USER}
-      ROUNDCUBEMAIL_DB_PASSWORD: ${ROUNDCUBE_DB_PASSWORD}
-      # ── Conexión al mailserver interno (por nombre Docker) ─
-      ROUNDCUBEMAIL_DEFAULT_HOST:    tls://mailserver
-      ROUNDCUBEMAIL_DEFAULT_PORT:    993
-      ROUNDCUBEMAIL_SMTP_SERVER:     tls://mailserver
-      ROUNDCUBEMAIL_SMTP_PORT:       587
-      # ── Seguridad ─────────────────────────────────────────
-      ROUNDCUBEMAIL_DES_KEY:         ${ROUNDCUBE_DES_KEY}
-      ROUNDCUBEMAIL_SKIN:            elastic
-      # ── Personalización institucional ─────────────────────
-      ROUNDCUBEMAIL_PRODUCT_NAME:    "Correo Reprobados.com"
-      ROUNDCUBEMAIL_USERNAME_DOMAIN: reprobados.com
-      # ── Sesión: cierre automático por inactividad (30 min) ─
-      ROUNDCUBEMAIL_SESSION_LIFETIME: ${ROUNDCUBE_SESSION_TIMEOUT}
-      # ── SSL interno ───────────────────────────────────────
-      ROUNDCUBEMAIL_SSL_VERIFY_PEER:       0
-      ROUNDCUBEMAIL_SSL_VERIFY_PEER_NAME:  0
-      ROUNDCUBEMAIL_SSL_CAFILE:            ""
-    ports:
-      - "${ROUNDCUBE_PORT}:80"        # HTTP (redirige a HTTPS)
-      - "${ROUNDCUBE_SSL_PORT}:443"   # HTTPS (puerto 8443 en host)
+      ROUNDCUBEMAIL_DB_TYPE:              mysql
+      ROUNDCUBEMAIL_DB_HOST:              roundcube_db
+      ROUNDCUBEMAIL_DB_PORT:              3306
+      ROUNDCUBEMAIL_DB_NAME:              ${ROUNDCUBE_DB_NAME}
+      ROUNDCUBEMAIL_DB_USER:              ${ROUNDCUBE_DB_USER}
+      ROUNDCUBEMAIL_DB_PASSWORD:          ${ROUNDCUBE_DB_PASSWORD}
+      # IMAP: usa TLS con el mailserver interno
+      ROUNDCUBEMAIL_DEFAULT_HOST:         tls://mailserver
+      ROUNDCUBEMAIL_DEFAULT_PORT:         993
+      # SMTP: STARTTLS en 587
+      ROUNDCUBEMAIL_SMTP_SERVER:          tls://mailserver
+      ROUNDCUBEMAIL_SMTP_PORT:            587
+      ROUNDCUBEMAIL_DES_KEY:              ${ROUNDCUBE_DES_KEY}
+      ROUNDCUBEMAIL_SKIN:                 elastic
+      ROUNDCUBEMAIL_PRODUCT_NAME:         "Correo Reprobados.com"
+      ROUNDCUBEMAIL_USERNAME_DOMAIN:      reprobados.com
+      ROUNDCUBEMAIL_SESSION_LIFETIME:     ${ROUNDCUBE_SESSION_TIMEOUT}
+      ROUNDCUBEMAIL_SSL_VERIFY_PEER:      0
+      ROUNDCUBEMAIL_SSL_VERIFY_PEER_NAME: 0
+      ROUNDCUBEMAIL_SSL_CAFILE:           ""
+    # ⚠ SIN puertos expuestos al host — el nginx proxy es el único
+    #   que habla con el exterior. Roundcube solo es accesible
+    #   dentro de la red Docker (red_correo).
+    expose:
+      - "80"
     volumes:
       - roundcube_data:/var/roundcube/db
       - roundcube_logs:/var/log/roundcube
@@ -142,11 +130,42 @@ services:
     networks:
       - red_correo
     healthcheck:
-      test: ["CMD", "curl", "-fsk", "https://localhost/"]
+      test: ["CMD", "curl", "-fs", "http://localhost/"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 45s
+
+  # ──────────────────────────────────────────────────────────
+  # 4. NGINX — Proxy SSL para Roundcube
+  #    Termina TLS con certificado autofirmado.
+  #    Puerto 8080 → HTTP (redirige a HTTPS)
+  #    Puerto 8443 → HTTPS ✓
+  # ──────────────────────────────────────────────────────────
+  roundcube_ssl:
+    image: nginx:alpine
+    container_name: p12_roundcube_ssl
+    restart: always
+    depends_on:
+      roundcube:
+        condition: service_healthy
+    ports:
+      - "${ROUNDCUBE_PORT}:80"        # HTTP → redirige a HTTPS
+      - "${ROUNDCUBE_SSL_PORT}:443"   # HTTPS con TLS autofirmado
+    volumes:
+      # Configuración nginx (la misma carpeta del proyecto)
+      - ./nginx/roundcube-ssl.conf:/etc/nginx/conf.d/default.conf:ro
+      # Certificados autofirmados generados por setup.sh
+      - ./certs/cert.pem:/etc/nginx/certs/cert.pem:ro
+      - ./certs/key.pem:/etc/nginx/certs/key.pem:ro
+    networks:
+      - red_correo
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--no-check-certificate", "https://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
 
 # ============================================================
 #  REDES
@@ -161,22 +180,22 @@ networks:
 # ============================================================
 volumes:
   mail_data:
-    name: practica12_mail_data        # buzones de correo
+    name: practica12_mail_data
 
   mail_state:
-    name: practica12_mail_state       # estado interno postfix/dovecot
+    name: practica12_mail_state
 
   mail_logs:
-    name: practica12_mail_logs        # logs auditables
+    name: practica12_mail_logs
 
   mail_config:
-    name: practica12_mail_config      # configuración dinámica
+    name: practica12_mail_config
 
   roundcube_db_data:
-    name: practica12_roundcube_db     # BD de Roundcube
+    name: practica12_roundcube_db
 
   roundcube_data:
-    name: practica12_roundcube_data   # preferencias y sesiones
+    name: practica12_roundcube_data
 
   roundcube_logs:
-    name: practica12_roundcube_logs   # logs del portal
+    name: practica12_roundcube_logs
