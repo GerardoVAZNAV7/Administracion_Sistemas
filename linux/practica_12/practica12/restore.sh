@@ -5,7 +5,7 @@
 # ============================================================
 set -euo pipefail
 
-PROYECTO_DIR="/home/gerardovn/practica12"
+PROYECTO_DIR="/home/gerardovn/Administracion_Sistemas/linux/practica_12/practica12"
 BACKUP_DIR="${PROYECTO_DIR}/backups"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; NC='\033[0m'

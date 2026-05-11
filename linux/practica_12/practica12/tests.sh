@@ -17,7 +17,7 @@ titulo() { echo -e "\n${BLUE}═════════════════
            echo -e "${BLUE}══════════════════════════════════════════${NC}"; }
 manual() { echo -e "  ${YELLOW}★ MANUAL${NC} — $1"; }
 
-PROYECTO_DIR="$(dirname "$0")"
+PROYECTO_DIR="/home/gerardovn/Administracion_Sistemas/linux/practica_12/practica12"
 cd "${PROYECTO_DIR}"
 source .env
 

@@ -6,7 +6,7 @@
 # ============================================================
 set -euo pipefail
 
-PROYECTO_DIR="/home/gerardovn/practica12"
+PROYECTO_DIR="/home/gerardovn/Administracion_Sistemas/linux/practica_12/practica12"
 BACKUP_DIR="${PROYECTO_DIR}/backups"
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
 BACKUP_FILE="${BACKUP_DIR}/mail_backup_${TIMESTAMP}.tar.gz"
