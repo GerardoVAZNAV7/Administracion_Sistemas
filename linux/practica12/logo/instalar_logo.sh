@@ -10,8 +10,8 @@ GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
 ok()   { echo -e "  ${GREEN}✔${NC} $1"; }
 info() { echo -e "  ${YELLOW}►${NC} $1"; }
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOGO_DIR="${SCRIPT_DIR}"
+SCRIPT_DIR="/home/gerardovn/Administracion_Sistemas/linux/practica_12/practica12/logo"
+LOGO_DIR="/home/gerardovn/Administracion_Sistemas/linux/practica_12/practica12/logo"
 
 echo "============================================================"
 echo "  Instalando logo institucional en Roundcube"
