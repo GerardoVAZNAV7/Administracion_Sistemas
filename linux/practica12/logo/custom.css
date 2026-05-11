@@ -1,0 +1,124 @@
+/* ============================================================
+   custom.css — Personalización institucional Reprobados.com
+   Roundcube Elastic skin
+   ============================================================ */
+
+/* ── Variables institucionales ────────────────────────────── */
+:root {
+    --color-main:        #2B3A4A;   /* azul oscuro del escudo  */
+    --color-accent:      #C07840;   /* cobre del logo           */
+    --color-accent-dark: #9A5E2A;
+    --color-bg:          #F4F5F7;
+    --color-white:       #FFFFFF;
+}
+
+/* ── Pantalla de LOGIN ─────────────────────────────────────── */
+#login-form {
+    background: var(--color-white);
+    border-radius: 10px;
+    box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+    padding: 2rem 2.5rem 2.5rem;
+}
+
+/* Logo en la pantalla de login */
+#login-form .formcontent::before {
+    content: '';
+    display: block;
+    width: 100%;
+    height: 110px;
+    background: url('../images/logo_login.png') center center no-repeat;
+    background-size: contain;
+    margin-bottom: 1.2rem;
+}
+
+/* Ocultar el texto "Roundcube Webmail" y mostrar nombre institucional */
+#login-form .formcontent h1,
+#login-form .formcontent .product-name {
+    display: none;
+}
+
+/* Fondo de la página de login */
+body.task-login {
+    background: linear-gradient(135deg, #2B3A4A 0%, #1A2530 60%, #0E1820 100%);
+}
+
+/* ── Barra superior (navbar) ───────────────────────────────── */
+#header {
+    background: var(--color-main) !important;
+    border-bottom: 3px solid var(--color-accent);
+}
+
+/* Logo en la navbar */
+#header .header-title::before {
+    content: '';
+    display: inline-block;
+    width: 120px;
+    height: 42px;
+    background: url('../images/logo_nav.png') left center no-repeat;
+    background-size: contain;
+    vertical-align: middle;
+    margin-right: 8px;
+}
+
+/* Ocultar texto "Roundcube" en navbar */
+#header .header-title span {
+    display: none;
+}
+
+/* ── Botones principales ───────────────────────────────────── */
+.btn-primary,
+a.button.primary,
+input[type=submit].primary {
+    background-color: var(--color-accent) !important;
+    border-color:     var(--color-accent-dark) !important;
+    color: var(--color-white) !important;
+}
+
+.btn-primary:hover,
+a.button.primary:hover {
+    background-color: var(--color-accent-dark) !important;
+}
+
+/* ── Sidebar / panel izquierdo ─────────────────────────────── */
+#sidebar,
+#folderlist-header {
+    background: var(--color-main) !important;
+    color: var(--color-white);
+}
+
+#sidebar a,
+#folderlist li a {
+    color: #CBD5E0 !important;
+}
+
+#sidebar a:hover,
+#folderlist li a:hover,
+#folderlist li.selected > a {
+    background: var(--color-accent) !important;
+    color: var(--color-white) !important;
+    border-radius: 6px;
+}
+
+/* ── Links y selección ─────────────────────────────────────── */
+a { color: var(--color-accent); }
+a:hover { color: var(--color-accent-dark); }
+
+.message-list li.selected,
+.contact-list li.selected {
+    background: rgba(192, 120, 64, 0.15) !important;
+    border-left: 3px solid var(--color-accent) !important;
+}
+
+/* ── Footer ─────────────────────────────────────────────────── */
+#footer {
+    background: var(--color-main);
+    color: #8A9BB0;
+    font-size: 0.78rem;
+    text-align: center;
+    padding: 6px;
+}
+
+#footer::after {
+    content: ' · Correo Reprobados.com — Aprender del Error.';
+    color: var(--color-accent);
+}
