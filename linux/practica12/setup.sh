@@ -7,7 +7,7 @@
 set -euo pipefail
 
 USUARIO="gerardovn"
-PROYECTO_DIR="/home/${USUARIO}/practica12"
+PROYECTO_DIR="/home/gerardovn/Administracion_Sistemas/linux/practica_12/practica12"
 DOMAIN="reprobados.com"
 MAIL_HOST="mail.reprobados.com"
 
