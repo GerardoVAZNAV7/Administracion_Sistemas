@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ============================================================
 #  setup.sh — Práctica 12/13 · Fedora Server
-#  Servidor de correo privado + Roundcube Webmail
+#  Servidor de correo privado + Roundcube Webmail (HTTPS real)
 #  Ejecutar como: sudo bash setup.sh
 # ============================================================
 set -euo pipefail
@@ -11,7 +11,6 @@ PROYECTO_DIR="/home/gerardovn/Administracion_Sistemas/linux/practica_12/practica
 DOMAIN="reprobados.com"
 MAIL_HOST="mail.reprobados.com"
 
-# ── Colores ───────────────────────────────────────────────────
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 paso() { echo -e "\n${BLUE}► $1${NC}"; }
 ok()   { echo -e "  ${GREEN}✔ $1${NC}"; }
@@ -29,7 +28,7 @@ openssl version               && ok "OpenSSL disponible"
 
 # ── 2. Crear estructura de directorios ───────────────────────
 paso "Creando estructura de directorios..."
-mkdir -p "${PROYECTO_DIR}"/{certs,mail-config,logs,backups,roundcube}
+mkdir -p "${PROYECTO_DIR}"/{certs,mail-config,logs,backups,roundcube,nginx}
 chown -R "${USUARIO}:${USUARIO}" "${PROYECTO_DIR}"
 ok "Directorios creados"
 
@@ -49,54 +48,81 @@ chmod 644 "${CERT_DIR}/cert.pem"
 chown -R "${USUARIO}:${USUARIO}" "${CERT_DIR}"
 ok "Certificados generados en ${CERT_DIR}"
 
-# ── 4. Configurar /etc/hosts para dominio local (lab) ────────
+# ── 4. Crear configuración de nginx SSL ──────────────────────
+paso "Creando configuración de nginx (proxy SSL para Roundcube)..."
+cat > "${PROYECTO_DIR}/nginx/roundcube-ssl.conf" << 'NGINXEOF'
+server {
+    listen 80;
+    server_name _;
+    return 301 https://$host:8443$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name _;
+
+    ssl_certificate     /etc/nginx/certs/cert.pem;
+    ssl_certificate_key /etc/nginx/certs/key.pem;
+
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:SSL:10m;
+    ssl_session_timeout 10m;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Frame-Options SAMEORIGIN;
+    add_header X-Content-Type-Options nosniff;
+
+    location / {
+        proxy_pass         http://roundcube:80;
+        proxy_set_header   Host              $host;
+        proxy_set_header   X-Real-IP         $remote_addr;
+        proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto https;
+        client_max_body_size 30M;
+        proxy_read_timeout   120s;
+    }
+}
+NGINXEOF
+chown "${USUARIO}:${USUARIO}" "${PROYECTO_DIR}/nginx/roundcube-ssl.conf"
+ok "nginx/roundcube-ssl.conf creado"
+
+# ── 5. Configurar /etc/hosts para dominio local ──────────────
 paso "Configurando resolución DNS local (modo laboratorio)..."
 SERVER_IP=$(hostname -I | awk '{print $1}')
 
-# Eliminar entradas previas del dominio
 sed -i "/${DOMAIN}/d" /etc/hosts
 sed -i "/${MAIL_HOST}/d" /etc/hosts
-
-# Agregar entradas
 echo "${SERVER_IP}  ${MAIL_HOST}  ${DOMAIN}  mail" >> /etc/hosts
 ok "/etc/hosts actualizado con ${MAIL_HOST} → ${SERVER_IP}"
 echo ""
-echo "  ⚠  En tu PC también agrega esta línea a /etc/hosts (o C:\\Windows\\System32\\drivers\\etc\\hosts):"
+echo "  ⚠  En tu PC agrega a /etc/hosts (o drivers\\etc\\hosts en Windows):"
 echo "     ${SERVER_IP}  ${MAIL_HOST}  ${DOMAIN}  mail"
 
-# ── 5. Simular registros DNS (mostrar lo que iría en DNS real) ─
-paso "Registros DNS que configurarías en un dominio real:"
+# ── 6. Registros DNS de referencia ───────────────────────────
+paso "Registros DNS para un dominio real:"
 echo ""
-echo "  Tipo  | Nombre              | Valor"
-echo "  ------|---------------------|----------------------------------------"
-echo "  MX    | ${DOMAIN}.          | 10 ${MAIL_HOST}."
-echo "  A     | mail.${DOMAIN}.     | ${SERVER_IP}"
-echo "  TXT   | ${DOMAIN}.          | \"v=spf1 ip4:${SERVER_IP} -all\""
-echo "  TXT   | _dmarc.${DOMAIN}.   | \"v=DMARC1; p=quarantine; rua=mailto:admin@${DOMAIN}\""
-echo "  (DKIM se genera al iniciar mailserver — ver setup DKIM más abajo)"
-echo ""
+echo "  MX    ${DOMAIN}.         10 ${MAIL_HOST}."
+echo "  A     mail.${DOMAIN}.    ${SERVER_IP}"
+echo "  TXT   ${DOMAIN}.         \"v=spf1 ip4:${SERVER_IP} -all\""
+echo "  TXT   _dmarc.${DOMAIN}.  \"v=DMARC1; p=quarantine; rua=mailto:admin@${DOMAIN}\""
 
-# ── 6. Configurar firewall (coexistencia con práctica 11) ────
-paso "Configurando firewalld (coexistencia con práctica 11)..."
+# ── 7. Configurar firewall ────────────────────────────────────
+paso "Configurando firewalld..."
 systemctl enable --now firewalld
 
-# Correo
-firewall-cmd --permanent --add-port=25/tcp     # SMTP
-firewall-cmd --permanent --add-port=587/tcp    # SMTP Submission
-firewall-cmd --permanent --add-port=465/tcp    # SMTPS
-firewall-cmd --permanent --add-port=143/tcp    # IMAP
-firewall-cmd --permanent --add-port=993/tcp    # IMAPS
-firewall-cmd --permanent --add-port=8080/tcp   # Roundcube HTTP
-firewall-cmd --permanent --add-port=8443/tcp   # Roundcube HTTPS
-
-# SSH (garantizar acceso)
+firewall-cmd --permanent --add-port=25/tcp
+firewall-cmd --permanent --add-port=587/tcp
+firewall-cmd --permanent --add-port=465/tcp
+firewall-cmd --permanent --add-port=143/tcp
+firewall-cmd --permanent --add-port=993/tcp
+firewall-cmd --permanent --add-port=8080/tcp
+firewall-cmd --permanent --add-port=8443/tcp
 firewall-cmd --permanent --add-service=ssh
-
 firewall-cmd --reload
 ok "Firewall configurado"
-firewall-cmd --list-ports
 
-# ── 7. Levantar el stack ──────────────────────────────────────
+# ── 8. Levantar el stack ──────────────────────────────────────
 paso "Levantando el stack de correo..."
 cd "${PROYECTO_DIR}"
 docker compose up -d
@@ -105,37 +131,31 @@ echo ""
 echo "  Esperando 60 segundos para que los servicios inicien..."
 sleep 60
 
-# ── 8. Crear cuentas de correo ───────────────────────────────
+# ── 9. Crear cuentas de correo ───────────────────────────────
 paso "Creando cuentas de correo..."
-
-# Leer credenciales del .env
 source "${PROYECTO_DIR}/.env"
 
-# Función para crear cuenta
 crear_cuenta() {
     local EMAIL="$1"
     local PASS="$2"
     echo "  Creando ${EMAIL}..."
     docker exec p12_mailserver setup email add "${EMAIL}" "${PASS}" 2>/dev/null && \
-        ok "${EMAIL} creada" || \
-        echo "  (puede que ya exista, continuando...)"
+        ok "${EMAIL} creada" || echo "  (puede que ya exista, continuando...)"
 }
 
 crear_cuenta "${MAIL_USER1}" "${MAIL_PASS1}"
 crear_cuenta "${MAIL_USER2}" "${MAIL_PASS2}"
 
-# ── 9. Configurar OpenDKIM ────────────────────────────────────
+# ── 10. Configurar OpenDKIM ───────────────────────────────────
 paso "Configurando OpenDKIM para ${DOMAIN}..."
 docker exec p12_mailserver setup config dkim domain "${DOMAIN}" 2>/dev/null || true
 sleep 5
-
 DKIM_KEY=$(docker exec p12_mailserver cat /tmp/docker-mailserver/opendkim/keys/${DOMAIN}/mail.txt 2>/dev/null || echo "no disponible aún")
 echo ""
-echo "  Registro DKIM para agregar a tu DNS:"
+echo "  Registro DKIM:"
 echo "  ${DKIM_KEY}"
-echo ""
 
-# ── 10. Estado final ─────────────────────────────────────────
+# ── 11. Estado final ──────────────────────────────────────────
 paso "Estado del stack:"
 docker compose ps
 
@@ -144,14 +164,17 @@ echo "================================================================"
 echo "  ✔ Setup completado"
 echo ""
 echo "  ACCESOS:"
-echo "  • Roundcube (HTTP)  → http://${SERVER_IP}:8080"
-echo "  • Roundcube (HTTPS) → https://${SERVER_IP}:8443"
+echo "  • Roundcube HTTP  → http://${SERVER_IP}:8080  (redirige a HTTPS)"
+echo "  • Roundcube HTTPS → https://${SERVER_IP}:8443  ✓ TLS autofirmado"
 echo ""
-echo "  CUENTAS CREADAS:"
+echo "  CUENTAS:"
 echo "  • ${MAIL_USER1}  /  ${MAIL_PASS1}"
 echo "  • ${MAIL_USER2}  /  ${MAIL_PASS2}"
 echo ""
-echo "  THUNDERBIRD / MAILSPRING (configuración manual):"
-echo "  • Servidor IMAP: ${SERVER_IP}  Puerto: 993  SSL: Sí"
-echo "  • Servidor SMTP: ${SERVER_IP}  Puerto: 587  STARTTLS: Sí"
+echo "  El navegador pedirá aceptar el certificado autofirmado."
+echo "  En Chrome: 'Configuración avanzada' → 'Continuar de todas formas'"
+echo ""
+echo "  THUNDERBIRD / MAILSPRING:"
+echo "  • IMAP: ${SERVER_IP}  Puerto: 993  SSL: Sí"
+echo "  • SMTP: ${SERVER_IP}  Puerto: 587  STARTTLS: Sí"
 echo "================================================================"
