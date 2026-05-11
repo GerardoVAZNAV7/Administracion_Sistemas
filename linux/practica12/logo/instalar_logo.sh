@@ -11,7 +11,7 @@ ok()   { echo -e "  ${GREEN}✔${NC} $1"; }
 info() { echo -e "  ${YELLOW}►${NC} $1"; }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOGO_DIR="${SCRIPT_DIR}/logo"
+LOGO_DIR="${SCRIPT_DIR}"
 
 echo "============================================================"
 echo "  Instalando logo institucional en Roundcube"
